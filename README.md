@@ -32,6 +32,7 @@ RISC-V 算子评测的控制面服务。统一接收 `JobRequest`，维护队列
 ```text
 src/lib.rs              HTTP 服务、队列、准入、授予、账本
 src/observability.rs    /metrics、观测汇总、HTTP SD、range、results、leaderboard
+webui/                  静态页面：K3 监控面板 dashboard.html 与历史设计稿
 contract/openapi.yaml   本服务 HTTP 接口（引用主仓共享 schema）
 contract/state-machine.md  作业生命周期约定
 tests/                  contract 与 observability 的 conformance 测试

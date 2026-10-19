@@ -1,0 +1,2186 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="v53D7cGAHNUZRaItZtDtRZ">
+<head data-page-node-id="gt9jcH0HXkhrjFYtciSBuK">
+<meta charset="utf-8" data-page-node-id="tzsKSMxBAL1ttu3xFWf1sV">
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="z0ACqVCGw4wMkHvvKgQe0Y">
+<title>K3 评估服务器监控</title>
+<style>
+  /* ============ 设计令牌：暗色（默认） ============ */
+  :root {
+    color-scheme: dark;
+    --bg: #070910;
+    --fg: #e9ecf5;
+    --dim: #98a2b8;
+    --dim2: #7b8699;
+    --line: rgba(255, 255, 255, .10);
+    --line-soft: rgba(255, 255, 255, .06);
+
+    --k3: #2dd6d1;
+    --k1: #6ba4ff;
+    --px: #b072ff;
+    --px2: #d9b3ff;
+    --ok: #3ecf6a;
+    --warn: #ffb524;
+    --bad: #ff6a5e;
+    --ok-txt: #68dd84;
+    --bad-txt: #ff8b80;
+    --warn-txt: #ffc85c;
+    /* 时间尺度配色：峰 / 5m 均 / 1m 均 —— 三个可分辨色相，最新值仍用指标状态色 */
+    --c-peak: #ff9d3d;
+    --c-avg5: #c48af5;
+    --c-avg1: #35e0da;
+
+    --ok-soft: rgba(62, 207, 106, .09);
+    --bad-soft: rgba(255, 106, 94, .09);
+    --warn-soft: rgba(255, 181, 36, .08);
+
+    /* 表面 / 高光（主题相关） */
+    --hi: rgba(255, 255, 255, .055);
+    --hi2: rgba(255, 255, 255, .045);
+    --hi3: rgba(255, 255, 255, .28);
+    --soft: rgba(255, 255, 255, .04);
+    --well: rgba(0, 0, 0, .32);
+    --well2: rgba(0, 0, 0, .16);
+    --well-br: rgba(255, 255, 255, .05);
+    --hover-br: rgba(255, 255, 255, .17);
+    --hover-bg: rgba(255, 255, 255, .025);
+    --dash: rgba(255, 255, 255, .08);
+    --grid: rgba(255, 255, 255, .02);
+    --track: rgba(255, 255, 255, .10);
+    --shadow: 0 22px 48px -30px rgba(0, 0, 0, .95);
+    --shadow-hi: inset 0 1px 0 rgba(255, 255, 255, .05);
+    --glow1: rgba(45, 214, 209, .10);
+    --glow2: rgba(107, 164, 255, .13);
+    --glow3: rgba(176, 114, 255, .06);
+    --head1: rgba(7, 9, 16, .96);
+    --head2: rgba(7, 9, 16, .80);
+    --brand1: #ffffff;
+    --brand2: #9fb3d9;
+    --brand3: #2dd6d1;
+    --scroll: rgba(255, 255, 255, .12);
+    --scroll-h: rgba(255, 255, 255, .22);
+    /* canvas 绘图色 */
+    --plot-base: rgba(255, 255, 255, .07);
+    --plot-dim: rgba(255, 255, 255, .22);
+    --plot-peak: rgba(255, 255, 255, .13);
+    --plot-txt: rgba(255, 255, 255, .38);
+    --plot-end: rgba(255, 255, 255, .9);
+
+    --radius: 18px;
+    --r-sm: 12px;
+  }
+
+  /* ============ 设计令牌：亮色 ============ */
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg: #eef1f7;
+    --fg: #101728;
+    --dim: #4a5568;
+    --dim2: #626c82;
+    --line: rgba(15, 23, 42, .13);
+    --line-soft: rgba(15, 23, 42, .08);
+
+    --k3: #0e9c98;
+    --k1: #2f6fe0;
+    --px: #8340d8;
+    --px2: #a878e8;
+    --ok: #16a34a;
+    --warn: #c47a00;
+    --bad: #d93a2f;
+    --ok-txt: #0d7f3a;
+    --bad-txt: #c22d23;
+    --warn-txt: #9a5f00;
+    --c-peak: #9a5000;
+    --c-avg5: #7b3fc0;
+    --c-avg1: #0a6f6c;
+
+    --ok-soft: rgba(22, 163, 74, .10);
+    --bad-soft: rgba(217, 58, 47, .10);
+    --warn-soft: rgba(196, 122, 0, .10);
+
+    --hi: rgba(255, 255, 255, .95);
+    --hi2: rgba(255, 255, 255, .80);
+    --hi3: rgba(255, 255, 255, 0);
+    --soft: rgba(15, 23, 42, .035);
+    --well: rgba(15, 23, 42, .055);
+    --well2: rgba(15, 23, 42, .018);
+    --well-br: rgba(15, 23, 42, .07);
+    --hover-br: rgba(15, 23, 42, .22);
+    --hover-bg: rgba(15, 23, 42, .03);
+    --dash: rgba(15, 23, 42, .13);
+    --grid: rgba(15, 23, 42, .04);
+    --track: rgba(15, 23, 42, .09);
+    --shadow: 0 14px 30px -22px rgba(15, 23, 42, .5);
+    --shadow-hi: inset 0 1px 0 rgba(255, 255, 255, .9);
+    --glow1: rgba(14, 156, 152, .17);
+    --glow2: rgba(47, 111, 224, .14);
+    --glow3: rgba(131, 64, 216, .09);
+    --head1: rgba(238, 241, 247, .97);
+    --head2: rgba(238, 241, 247, .78);
+    --brand1: #0f172a;
+    --brand2: #2f6fe0;
+    --brand3: #0e9c98;
+    --scroll: rgba(15, 23, 42, .18);
+    --scroll-h: rgba(15, 23, 42, .3);
+    --plot-base: rgba(15, 23, 42, .14);
+    --plot-dim: rgba(15, 23, 42, .35);
+    --plot-peak: rgba(15, 23, 42, .16);
+    --plot-txt: rgba(15, 23, 42, .5);
+    --plot-end: rgba(255, 255, 255, 1);
+  }
+
+  * { box-sizing: border-box; }
+  html { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+  html, body { margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+    padding: 0 clamp(14px, 3vw, 32px) 40px;
+    -webkit-font-smoothing: antialiased;
+    transition: background .35s ease, color .35s ease;
+  }
+  /* 背景：三道径向光晕 + 细网格纹理（固定层，随滚动不动） */
+  body::before {
+    content: "";
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(900px 480px at 88% -12%, var(--glow1), transparent 60%),
+      radial-gradient(1200px 600px at 8% -10%, var(--glow2), transparent 58%),
+      radial-gradient(700px 500px at 50% 108%, var(--glow3), transparent 65%),
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: auto, auto, auto, 46px 46px, 46px 46px;
+    mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, .7) 40%, rgba(0, 0, 0, .3) 100%);
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, .7) 40%, rgba(0, 0, 0, .3) 100%);
+    transition: background .35s ease;
+  }
+  main { position: relative; z-index: 1; max-width: 1560px; margin: 0 auto; }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 99px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--scroll-h); background-clip: content-box; }
+
+  /* ---------- 不可达横幅 ---------- */
+  #banner {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--bad-soft);
+    border: 1px solid rgba(255, 106, 94, .5);
+    color: var(--bad-txt); border-radius: 14px;
+    padding: 10px 16px; margin-bottom: 12px; font-size: 13px;
+  }
+  #banner[hidden] { display: none; }
+  #banner b { font-weight: 650; }
+  #banner .msg { color: var(--dim); font-size: 12px; }
+  #banner .ts { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--dim2); font-size: 11.5px; }
+
+  /* ---------- 顶栏（吸顶玻璃条） ---------- */
+  header {
+    position: sticky; top: 0; z-index: 6;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 10px 20px;
+    margin: 0 0 16px; padding: 14px 0 12px;
+    background: linear-gradient(180deg, var(--head1) 0%, var(--head2) 62%, transparent 100%);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+  h1 { font-size: 20px; margin: 0; font-weight: 700; letter-spacing: .2px; }
+  h1 .brand {
+    background: linear-gradient(92deg, var(--brand1) 8%, var(--brand2) 55%, var(--brand3) 130%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  h1 small { color: var(--dim2); font-weight: 400; font-size: 11.5px; margin-left: 12px; letter-spacing: 0; }
+  h1 small .sep { opacity: .45; margin: 0 7px; }
+  .hright { display: flex; align-items: center; gap: 14px; }
+  #stampbox { color: var(--dim2); font-size: 11.5px; font-variant-numeric: tabular-nums; display: flex; align-items: center; letter-spacing: .2px; }
+  .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft), 0 0 8px var(--ok);
+    margin-right: 8px; animation: breathe 2.6s ease-in-out infinite;
+  }
+  .dot.err { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft), 0 0 8px var(--bad); }
+  @keyframes breathe { 50% { opacity: .45; } }
+
+  /* 主题切换 + 通用小按钮 */
+  .tbtn {
+    font-family: inherit; font-size: 11px; line-height: 1;
+    color: var(--dim); background: var(--soft);
+    border: 1px solid var(--line-soft); border-radius: 999px;
+    padding: 5px 12px; cursor: pointer; white-space: nowrap;
+    transition: color .2s ease, border-color .2s ease, background .2s ease, transform .2s ease;
+  }
+  .tbtn:hover { color: var(--fg); border-color: var(--hover-br); }
+  .tbtn[aria-pressed="true"] {
+    color: var(--k1); border-color: rgba(107, 164, 255, .45);
+    background: rgba(107, 164, 255, .1);
+  }
+  #themeBtn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; }
+  #themeBtn svg { width: 13px; height: 13px; }
+  .seg { display: inline-flex; gap: 0; border: 1px solid var(--line-soft); border-radius: 999px; overflow: hidden; background: var(--soft); }
+  .seg .tbtn { border: 0; border-radius: 0; background: transparent; padding: 5px 13px; }
+  .seg .tbtn + .tbtn { border-left: 1px solid var(--line-soft); }
+  .seg .tbtn[aria-pressed="true"] { background: rgba(107, 164, 255, .12); }
+
+  /* ---------- KPI 指挥台 ---------- */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(186px, 1fr)); gap: 12px; margin: 0 0 16px; }
+  .kpi {
+    --ac: var(--k1);
+    position: relative; overflow: hidden;
+    border: 1px solid var(--line-soft); border-radius: 16px;
+    padding: 12px 14px 13px;
+    background:
+      radial-gradient(130% 110% at 0% 0%, var(--hi), transparent 58%),
+      linear-gradient(180deg, var(--hi2), rgba(127, 127, 127, .015));
+    box-shadow: var(--shadow), var(--shadow-hi);
+  }
+  /* 入场动画只在卡片新建时挂一次（.rise-once），播完由 JS 摘掉。
+     不能常驻在 .card/.kpi 上：syncBoards 归位时的 appendChild 会重放动画 → 整页每 15s 抖一次。
+     backwards（不是 both）：结束后交还普通样式，否则锁死 transform 让 :hover 抬升失效。 */
+  .kpi.rise-once, .card.rise-once { animation: rise .5s cubic-bezier(.2, .7, .3, 1) backwards; }
+  .kpi.good { --ac: var(--ok); } .kpi.warnc { --ac: var(--warn); } .kpi.badc { --ac: var(--bad); }
+  .kpi::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, var(--ac), transparent 78%); opacity: .75; }
+  .kpi .kl { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); letter-spacing: .3px; }
+  .kpi .kl .ki { width: 5px; height: 5px; border-radius: 50%; background: var(--ac); flex: none; }
+  .kpi .kv2 { display: flex; align-items: baseline; gap: 4px; margin-top: 5px; }
+  .kpi .kv2 b { font-size: 27px; font-weight: 700; letter-spacing: -1px; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--fg); }
+  .kpi .kv2 .ku { font-size: 11px; color: var(--dim2); font-weight: 500; }
+  .kpi .ks { margin-top: 4px; font-size: 10.5px; color: var(--dim2); display: flex; align-items: baseline; gap: 6px; min-height: 15px; }
+  .kpi .ks .tag { color: var(--dim); }
+  .kpi .kbar { height: 3px; border-radius: 3px; background: var(--track); margin-top: 9px; overflow: hidden; }
+  .kpi .kbar i { display: block; height: 100%; border-radius: 3px; background: var(--ac); transition: width .6s cubic-bezier(.2,.7,.3,1); }
+  .kpi .kspark { position: absolute; right: 12px; top: 12px; width: 62px; height: 22px; opacity: .6; pointer-events: none; }
+
+  /* ---------- 告警收敛条 ---------- */
+  .alerts { display: grid; grid-template-columns: repeat(auto-fit, minmax(275px, 1fr)); gap: 10px; margin: 0 0 16px; }
+  .alert {
+    display: flex; align-items: flex-start; gap: 9px;
+    padding: 9px 13px; border-radius: 13px; font-size: 12px; cursor: pointer;
+    border: 1px solid var(--bad-line, rgba(255, 106, 94, .42));
+    background: var(--bad-soft);
+    transition: transform .2s ease, border-color .2s ease;
+  }
+  .alert:hover { transform: translateY(-1px); border-color: var(--bad); }
+  .alert.lv-warn { --bad-line: rgba(255, 181, 36, .42); background: var(--warn-soft); }
+  .alert.lv-warn:hover { border-color: var(--warn); }
+  .alert .ai { flex: none; font-size: 12px; line-height: 1.35; }
+  .alert .at { min-width: 0; }
+  .alert .at b { color: var(--fg); font-weight: 650; }
+  .alert .ad { display: block; color: var(--dim); font-size: 11px; margin-top: 1px; }
+  .card.flash { animation: flash 1.4s ease; }
+  @keyframes flash {
+    0%, 100% { box-shadow: var(--shadow), var(--shadow-hi); }
+    30% { box-shadow: 0 0 0 2px var(--accent, var(--k1)), 0 0 34px -12px var(--accent, var(--k1)); }
+  }
+  .allclear {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 13px; font-size: 12px; color: var(--dim);
+    border: 1px dashed var(--line); background: var(--soft);
+  }
+  .allclear b { color: var(--ok-txt); font-weight: 600; }
+
+  /* ---------- 区块标题（左侧色条 accent + 工具） ---------- */
+  .blk + .blk { margin-top: 26px; }
+  .blk { --accent: var(--k1); }
+  .blk.se-evald { --accent: var(--k3); }
+  .blk.se-host { --accent: var(--k1); }
+  h2.sec {
+    font-size: 15px; margin: 0 0 12px; display: flex; align-items: baseline; gap: 12px;
+    flex-wrap: wrap; font-weight: 620; letter-spacing: .3px;
+  }
+  h2.sec::before {
+    content: ""; align-self: center;
+    width: 3px; height: 14px; border-radius: 3px; flex: none;
+    background: linear-gradient(180deg, var(--accent), transparent);
+    box-shadow: 0 0 10px -1px var(--accent);
+  }
+  h2.sec .hint { color: var(--dim2); font-size: 11px; font-weight: 400; letter-spacing: 0; }
+  h2.sec .tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .blk.folded > *:not(h2) { display: none; }
+  .blk.folded h2.sec { margin-bottom: 0; }
+  .donly { display: none; }
+  .blk.det .donly { display: revert; }
+  /* 概览模式下 evald 卡的图表块不占空间 */
+  .hcard .mrow .plot.donly { display: none; }
+  .blk.det .hcard .mrow .plot.donly { display: block; }
+
+  /* ---------- 卡片通用 ---------- */
+  .card {
+    position: relative; overflow: hidden;
+    background:
+      radial-gradient(120% 100% at 0% 0%, var(--hi), transparent 55%),
+      linear-gradient(180deg, var(--hi2), rgba(127, 127, 127, .012));
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    padding: 15px 16px 16px;
+    box-shadow: var(--shadow), var(--shadow-hi);
+    backdrop-filter: blur(8px);
+    transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+  }
+  .card::after {
+    content: ""; position: absolute; inset: 0 0 auto; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--hi3) 22%, rgba(255, 255, 255, .1) 60%, transparent);
+    opacity: .65;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    border-color: var(--hover-br);
+    box-shadow: var(--shadow), 0 0 30px -22px var(--accent, rgba(0, 0, 0, .6)), var(--shadow-hi);
+  }
+  .card.down { border-color: rgba(255, 106, 94, .5); background: var(--bad-soft); }
+  .card.k3c { border-color: rgba(45, 214, 209, .3); background: linear-gradient(180deg, rgba(45, 214, 209, .075), rgba(45, 214, 209, .012)); }
+  .card.k3c:hover { border-color: rgba(45, 214, 209, .5); }
+  .ecard.big::before, .hcard.k3c::before {
+    content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 2px;
+    border-radius: 0 2px 2px 0; background: linear-gradient(180deg, var(--k3), transparent);
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  #egrid > *:nth-child(2) { animation-delay: .05s; } #egrid > *:nth-child(3) { animation-delay: .1s; }
+  #egrid > *:nth-child(4) { animation-delay: .15s; } #egrid > *:nth-child(5) { animation-delay: .2s; }
+  #hgrid > *:nth-child(2) { animation-delay: .06s; } #hgrid > *:nth-child(3) { animation-delay: .12s; }
+  #hgrid > *:nth-child(4) { animation-delay: .18s; } #hgrid > *:nth-child(5) { animation-delay: .24s; }
+
+  .hd { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .hd h3 { font-size: 15px; margin: 0; font-weight: 620; display: flex; align-items: center; flex-wrap: wrap; letter-spacing: .2px; }
+  .hd .ip { color: var(--dim2); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: .2px; }
+  .role {
+    font-size: 10px; color: var(--k1); border: 1px solid rgba(107, 164, 255, .35);
+    background: rgba(107, 164, 255, .08);
+    border-radius: 999px; padding: 1px 8px; margin-left: 8px; font-weight: 400; letter-spacing: .2px;
+  }
+  .role.r-k3 { color: var(--k3); border-color: rgba(45, 214, 209, .35); background: rgba(45, 214, 209, .08); }
+
+  .led {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 8px; vertical-align: 1px; flex: none;
+    background: var(--ok);
+    box-shadow: 0 0 0 3px var(--ok-soft), 0 0 8px var(--ok);
+    animation: breathe 2.4s ease-in-out infinite;
+  }
+  .led.bad { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft), 0 0 8px var(--bad); }
+  .led.off { background: var(--dim2); box-shadow: none; animation: none; }
+
+  .pill {
+    display: inline-block; font-size: 10.5px; padding: 2.5px 10px; border-radius: 999px;
+    border: 1px solid var(--line-soft); color: var(--dim);
+    background: var(--soft); letter-spacing: .2px; white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok-txt); border-color: rgba(62, 207, 106, .35); background: var(--ok-soft); }
+  .pill.bad { color: var(--bad-txt); border-color: rgba(255, 106, 94, .4); background: var(--bad-soft); }
+  .pill.warn { color: var(--warn-txt); border-color: rgba(255, 181, 36, .35); background: var(--warn-soft); }
+  .stline { margin: 10px 0 2px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .stline.slim { margin-top: 8px; }
+
+  .badge {
+    font-size: 11px; padding: 2.5px 9px; border-radius: 999px;
+    border: 1px solid var(--line-soft); background: var(--soft);
+    color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .badge.okb { color: var(--ok-txt); border-color: rgba(62, 207, 106, .3); background: var(--ok-soft); }
+  .badge.badb { color: var(--bad-txt); border-color: rgba(255, 106, 94, .32); background: var(--bad-soft); }
+  .badge.warnb { color: var(--warn-txt); border-color: rgba(255, 181, 36, .3); background: var(--warn-soft); }
+
+  .arrow { font-size: 10px; margin-left: 4px; }
+
+  /* ---------- evald 作业线 ---------- */
+  #egrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .ecard { grid-column: span 1; display: flex; flex-direction: column; }
+  .ecard.big { grid-column: span 2; }
+  @media (max-width: 1280px) { #egrid { grid-template-columns: repeat(2, 1fr); } .ecard.big { grid-column: span 2; } }
+  @media (max-width: 620px)  { #egrid { grid-template-columns: 1fr; } .ecard, .ecard.big { grid-column: span 1; } }
+
+  .lanes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 0; }
+  .lane {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    background: linear-gradient(180deg, var(--well), var(--well2));
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r-sm); padding: 7px 11px; font-size: 12px;
+    transition: border-color .2s ease;
+  }
+  .lane:hover { border-color: var(--hover-br); }
+  .lane .nm { color: var(--dim); font-size: 11px; letter-spacing: .2px; }
+  .lane b { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--fg); }
+  .lane span:last-child { color: var(--dim); font-size: 11.5px; }
+  .lanes.sm { grid-template-columns: 1fr; gap: 6px; }
+  .lanes.sm .lane { padding: 5px 10px; font-size: 11.5px; }
+  .lane.lz { opacity: .45; }
+
+  .cnts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 0; }
+  .cnt {
+    background: linear-gradient(180deg, var(--hi2), rgba(127, 127, 127, .012));
+    border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+    padding: 9px 10px 7px; position: relative; overflow: hidden;
+  }
+  .cnt b { display: block; font-size: 21px; font-variant-numeric: tabular-nums; line-height: 1.15; font-weight: 680; letter-spacing: -.4px; }
+  .cnt span { font-size: 10px; color: var(--dim2); letter-spacing: .2px; }
+  .cnt.ok b { color: var(--ok-txt); } .cnt.ok::before { content: ""; position: absolute; inset: auto 0 0 0; height: 2px; background: linear-gradient(90deg, var(--ok), transparent); opacity: .5; }
+  .cnt.bad b { color: var(--bad-txt); } .cnt.bad::before { content: ""; position: absolute; inset: auto 0 0 0; height: 2px; background: linear-gradient(90deg, var(--bad), transparent); opacity: .5; }
+  .cnt.warn b { color: var(--warn-txt); } .cnt.warn::before { content: ""; position: absolute; inset: auto 0 0 0; height: 2px; background: linear-gradient(90deg, var(--warn), transparent); opacity: .5; }
+
+  .cnts.c3 { grid-template-columns: repeat(3, 1fr); }
+  .cnt.dl b { color: var(--fg); }
+  .cnt.dl::before { content: ""; position: absolute; inset: auto 0 0 0; height: 2px; background: linear-gradient(90deg, var(--k3), transparent); opacity: .45; }
+
+  /* ---------- 流水线漏斗（func → acc → perf 桑基） ---------- */
+  .blk.se-flow { --accent: var(--px); }
+  .flowcard { padding: 8px 12px 10px; }
+  svg.flow { width: 100%; height: auto; display: block; }
+  svg.flow text { font-family: inherit; }
+  .flowstats { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; margin-top: 4px; }
+  .flowstats .arrow { color: var(--dim2); }
+
+  /* 最近 3 个作业：执行时间 / 排队等待 */
+  .recent {
+    margin-top: 12px; padding: 8px 11px 9px;
+    background: linear-gradient(180deg, var(--well), var(--well2));
+    border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+  }
+  .recent .rhd { display: flex; gap: 8px; align-items: baseline; font-size: 10.5px; color: var(--dim2); letter-spacing: .3px; margin-bottom: 4px; }
+  .recent .rhd em { font-style: normal; font-size: 10px; opacity: .75; }
+  .recent .ritem { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; padding: 3px 0; }
+  .recent .ritem + .ritem { border-top: 1px solid var(--line-soft); }
+  .recent .rop { flex: 1; min-width: 0; color: var(--fg); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recent .rdur { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--k3); }
+  .recent .rwait2, .recent .rage { color: var(--dim2); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .recent .rnodata { color: var(--dim2); font-size: 11px; line-height: 1.6; }
+  .recent .rnodata code { font-size: 10px; color: var(--dim); background: var(--soft); border: 1px solid var(--line-soft); border-radius: 4px; padding: 0 4px; }
+
+  .rateline { display: flex; align-items: baseline; gap: 7px; margin: 14px 0 0; font-size: 11.5px; color: var(--dim); flex-wrap: wrap; }
+  .rateline b { font-size: 17px; color: var(--fg); font-variant-numeric: tabular-nums; font-weight: 680; letter-spacing: -.3px; }
+  .rateline .u { font-size: 10.5px; color: var(--dim2); }
+
+  .sparkrow { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 14px; font-size: 11px; color: var(--dim2); }
+  .sparkrow .sv { font-variant-numeric: tabular-nums; color: var(--fg); font-size: 12.5px; font-weight: 600; }
+  .lg { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; color: var(--dim2); }
+  .lg > span { display: inline-flex; align-items: center; }
+  .sw { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 4px; }
+  .sw.k3bg { background: var(--k3); } .sw.okbg { background: var(--ok); }
+  .sw.badbg { background: var(--bad); } .sw.warnbg { background: var(--warn); }
+
+  /* 图表井：画布内凹，不与卡片底色糊在一起 */
+  .plot {
+    background: linear-gradient(180deg, var(--well), var(--well2));
+    border: 1px solid var(--well-br);
+    border-radius: 10px; padding: 5px 7px; margin-top: 6px;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, .12);
+  }
+  canvas.spark { width: 100%; height: 30px; display: block; }
+
+  .lastjob {
+    margin-top: 12px; font-size: 11.5px; color: var(--dim2);
+    padding-top: 10px; border-top: 1px dashed var(--dash);
+  }
+  .lastjob .op { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+  .kv { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; padding: 4px 0; }
+  .kv .k { color: var(--dim); font-size: 12px; }
+  .kv b { font-variant-numeric: tabular-nums; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 9px 0 0; }
+  .ecard .grow { flex: 1; }
+
+  /* ---------- K3-ACC（正确性正本）紫色系变体 ---------- */
+  .card.accc { border-color: rgba(176, 114, 255, .3); background: linear-gradient(180deg, rgba(176, 114, 255, .07), rgba(176, 114, 255, .012)); }
+  .card.accc:hover { border-color: rgba(176, 114, 255, .5); }
+  .ecard.big.accc::before { background: linear-gradient(180deg, var(--px), transparent); }
+  .role.r-acc { color: var(--px); border-color: rgba(176, 114, 255, .35); background: rgba(176, 114, 255, .08); }
+  .accc .cnt.dl::before { background: linear-gradient(90deg, var(--px), transparent); }
+
+  /* ---------- 车道拓扑条（静态信息，随区块折叠） ---------- */
+  .topo { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; margin: 0 0 14px; }
+  .tpo {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    font-size: 12px; color: var(--dim);
+    background: linear-gradient(180deg, var(--well), var(--well2));
+    border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+    padding: 9px 13px;
+  }
+  .tpo b { color: var(--fg); font-weight: 620; letter-spacing: .2px; }
+  .tpo .td { width: 7px; height: 7px; border-radius: 50%; align-self: center; flex: none; }
+  .tpo .td.timing { background: var(--k3); box-shadow: 0 0 0 3px rgba(45, 214, 209, .12); }
+  .tpo .td.acc { background: var(--px); box-shadow: 0 0 0 3px rgba(176, 114, 255, .12); }
+  .tpo .td.host { background: var(--k1); box-shadow: 0 0 0 3px rgba(107, 164, 255, .12); }
+
+  /* ---------- 主机卡片区 ---------- */
+  #hgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+  .hcard .kernel { color: var(--dim2); font-size: 10.5px; margin: 6px 0 8px 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .2px; }
+  .mrow {
+    display: grid; grid-template-columns: 70px 1fr 74px; gap: 9px;
+    align-items: center; padding: 6px 0;
+    border-top: 1px solid var(--line-soft);
+  }
+  .blk.det .mrow { grid-template-columns: 70px 1fr 74px 92px; }
+  .mrow .mk { color: var(--dim); font-size: 11.5px; }
+  .mrow .mv { font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; font-weight: 600; }
+  .mrow .plot { margin-top: 0; padding: 0 4px; border-color: transparent; background: transparent; box-shadow: none; }
+  .mrow canvas.spark { height: 24px; }
+  .mv.warn { color: var(--warn-txt); } .mv.bad { color: var(--bad-txt); font-weight: 650; }
+  .mrow:hover { background: var(--hover-bg); }
+  .plot:hover { border-color: var(--hover-br); }
+  /* 多层进度条：同一根条里叠 5m 峰值 / 5m 均值 / 1m 均值 / 最新值（透明度递增＝"越近越实"） */
+  .mcell { display: block; min-width: 0; }
+  .mstat { min-width: 0; }
+  .mbar { display: block; position: relative; height: 11px; border-radius: 99px; background: var(--track); }
+  /* 四层叠加：同一刻度上，越长＝值越大。
+     色相按时间尺度分开（峰=橙 / 5m=紫 / 1m=青），最新值保持指标状态色 —— 只看透明度在 11px 细条上分不开。 */
+  .mbar i {
+    position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px;
+    transition: width .5s cubic-bezier(.2, .7, .3, 1);
+  }
+  .mbar .l5 { background: var(--c-peak); opacity: .24; }
+  .mbar .a5 { background: var(--c-avg5); opacity: .46; }
+  .mbar .a1 { background: var(--c-avg1); opacity: .68; }
+  .mbar .nw { background: var(--gc, var(--k1)); opacity: 1; }
+  /* 端点竖线：同色实色，位置就是该尺度的值 */
+  .mbar .pk {
+    position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; border-radius: 2px;
+    transition: left .5s cubic-bezier(.2, .7, .3, 1);
+  }
+  .mbar .pk.k5  { background: var(--c-peak); width: 3px; margin-left: -1.5px; box-shadow: 0 0 7px var(--c-peak); }
+  .mbar .pk.k5a { background: var(--c-avg5); }
+  .mbar .pk.k1a { background: var(--c-avg1); }
+  .mbar .pk.knw { background: var(--gc, var(--k1)); width: 2.5px; margin-left: -1.25px; }
+  .mbar.g-ok { --gc: var(--ok); } .mbar.g-warn { --gc: var(--warn); } .mbar.g-bad { --gc: var(--bad); }
+  /* 按簇着色（data-ck 属性 → 主题变量，换肤自动跟随） */
+  .mbar[data-ck="px"] { --gc: var(--px); } .mbar[data-ck="k3"] { --gc: var(--k3); }
+  .mbar[data-ck="k1"] { --gc: var(--k1); } .mbar[data-ck="warn"] { --gc: var(--warn); }
+  /* 每核堆叠条：满宽＝全簇满载（N 核 × 100%），每核一段，≥90% 变红 */
+  .mbar.cores { display: flex; gap: 2px; }
+  .mbar.cores i {
+    position: static; height: auto; flex: 0 0 auto; min-width: 0;
+    border-radius: 2px; background: var(--gc, var(--k1)); opacity: .82;
+    transition: width .5s cubic-bezier(.2, .7, .3, 1);
+  }
+  .mbar.cores i.hot { background: var(--bad); opacity: 1; }
+  /* evald 实例卡「绑定核」迷你条 */
+  .bindrow { display: flex; align-items: center; gap: 9px; margin-top: 12px; font-size: 11px; color: var(--dim); }
+  .bindrow .bnm2 { flex: none; letter-spacing: .2px; white-space: nowrap; }
+  .bindrow .mbar { flex: 1; height: 8px; }
+  .bindrow .mbar:empty { display: none; }
+  .bindrow b { flex: none; font-variant-numeric: tabular-nums; color: var(--fg); font-weight: 620; }
+  /* worker 瓦片：每 worker 一格（名 / 迷你条 / 占用%），≥90% 变红 */
+  .bindrow .wgrid { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); gap: 6px; min-width: 0; }
+  .wtile { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .wtile .wn { font-size: 9.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wtile .wb { display: block; height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+  .wtile .wb i { display: block; height: 100%; border-radius: 3px; background: var(--gc, var(--px)); transition: width .5s cubic-bezier(.2, .7, .3, 1); }
+  .wtile .wb i.hot { background: var(--bad); }
+  .wtile .wp { font-size: 9.5px; color: var(--fg); font-variant-numeric: tabular-nums; font-weight: 600; }
+  /* 数值行：文字颜色与条上的色相一一对应，等于图例 */
+  .mstat { display: flex; gap: 10px; flex-wrap: nowrap; overflow: hidden; margin-top: 5px; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .mstat .ms { white-space: nowrap; color: var(--c-peak); }
+  .mstat .ms.a5 { color: var(--c-avg5); }
+  .mstat .ms.a1 { color: var(--c-avg1); }
+  .mstat b { font-weight: 600; }
+  .mstat .ms.f { color: var(--dim2); }
+  .mv b { font-weight: inherit; }
+  .mv .aw { font-size: 10px; margin-left: 4px; }
+
+  /* ---------- 主机表格视图（细化数据） ---------- */
+  #htableWrap { display: none; overflow-x: auto; border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--hi2); }
+  #htableWrap.on { display: block; }
+  #hgrid.off { display: none; }
+  table.ht { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.ht th, table.ht td { padding: 8px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line-soft); }
+  table.ht th { color: var(--dim); font-weight: 500; font-size: 11px; letter-spacing: .3px; background: var(--soft); position: sticky; top: 0; }
+  table.ht td:first-child, table.ht th:first-child { text-align: left; }
+  table.ht tbody tr:hover { background: var(--hover-bg); }
+  table.ht td.num { font-variant-numeric: tabular-nums; font-weight: 600; }
+  table.ht td .ipc { color: var(--dim2); font-weight: 400; font-size: 11px; margin-left: 6px; }
+  table.ht td .st { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: var(--ok); }
+  table.ht td .st.bad { background: var(--bad); }
+  table.ht td.v-warn { color: var(--warn-txt); } table.ht td.v-bad { color: var(--bad-txt); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card.rise-once, .kpi.rise-once { animation: none; }
+    .led, .dot { animation: none; }
+    .card:hover, .kpi:hover, .alert:hover, .tbtn:hover { transform: none; }
+  }
+
+  footer {
+    position: relative; color: var(--dim2); font-size: 11px; line-height: 1.9;
+    margin-top: 28px; padding-top: 14px;
+  }
+  footer::before {
+    content: ""; position: absolute; inset: 0 0 auto; height: 1px;
+    background: linear-gradient(90deg, var(--line), transparent 60%);
+  }
+  footer code {
+    font-size: 10.5px; color: var(--dim); background: var(--soft);
+    border: 1px solid var(--line-soft); border-radius: 5px; padding: 0 5px;
+  }
+</style>
+<script>
+/* 首帧前定主题，避免深色页闪一下白底 */
+(function () {
+  try {
+    var t = localStorage.getItem("k1mon-theme") || "auto";
+    var d = t === "auto" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : t;
+    document.documentElement.setAttribute("data-theme", d);
+  } catch (e) {}
+})();
+</script>
+
+</head>
+<body data-page-node-id="xHe5hKjCAY8gRWNOOdufvM">
+<main data-page-node-id="GlzOrHwzlm6kH94xHGQiIB">
+  <div id="banner" hidden data-page-node-id="5ezhsTDrt88LX8dBtcYpMo">
+    <b data-page-node-id="yIAoAOPO4aU9Xk5EGGN4iY">Prometheus 不可达</b>
+    <span class="msg" id="banner-msg" data-page-node-id="ZxwKjJc15ysM8l1MfFDn0E"></span>
+    <span class="ts" id="banner-ts" data-page-node-id="MAhZDalbqHZ7I94Uz81I2K"></span>
+  </div>
+
+  <header data-page-node-id="HfuEh6HqLbmposfod7Sd7c">
+    <div class="ttl" data-page-node-id="dULyTsdUALt81FRwT0n5cF">
+      <h1 data-page-node-id="eHL6MvmUvP9x8iR5wi2LDg"><span class="brand">K3 评估服务器监控</span><small data-page-node-id="S8SQnoF5k8fBCIRnXNQZZw">evald 双实例<span class="sep">·</span>原生 /metrics<span class="sep">·</span>实时 5s</small></h1>
+    </div>
+    <div class="hright" data-page-node-id="askDg7nXjxgaFGzYt3APPo">
+      <div id="stampbox" data-page-node-id="X7q93hOx5kZLAl49Y9HMLH"><span class="dot" id="dot" data-page-node-id="TLIJCByzU41FTpMFLR1YFr"></span>更新于 <span id="stamp" data-page-node-id="B3LfxogBbGjx7KxcqSBZ2R">--:--:--</span></div>
+      <button class="tbtn" id="themeBtn" type="button" title="切换明暗主题（Alt+T）" aria-label="切换主题"></button>
+    </div>
+  </header>
+
+  <!-- KPI 指挥台：一次看全集群重点 -->
+  <section class="kpis" id="kpis" aria-label="集群总览">
+    <div class="kpi" id="kpi-online">
+      <div class="kl"><span class="ki"></span>evald 实例在线</div>
+      <div class="kv2"><b data-k="v">–</b><span class="ku" data-k="u"></span></div>
+      <div class="ks" data-k="s">初始化…</div>
+      <div class="kbar"><i data-k="bar" style="width:0%"></i></div>
+    </div>
+    <div class="kpi" id="kpi-tp">
+      <div class="kl"><span class="ki"></span>evald 吞吐</div>
+      <div class="kv2"><b data-k="v">–</b><span class="ku">jobs/min</span></div>
+      <div class="ks" data-k="s">近 15 min 完成速率</div>
+      <div class="kbar"><i data-k="bar" style="width:0%"></i></div>
+      <canvas class="kspark" data-k="spark"></canvas>
+    </div>
+    <div class="kpi" id="kpi-queue">
+      <div class="kl"><span class="ki"></span>队列积压</div>
+      <div class="kv2"><b data-k="v">–</b><span class="ku">jobs</span></div>
+      <div class="ks" data-k="s">双实例各车道求和</div>
+      <div class="kbar"><i data-k="bar" style="width:0%"></i></div>
+      <canvas class="kspark" data-k="spark"></canvas>
+    </div>
+    <div class="kpi" id="kpi-succ">
+      <div class="kl"><span class="ki"></span>24h 成功率</div>
+      <div class="kv2"><b data-k="v">–</b><span class="ku">%</span></div>
+      <div class="ks" data-k="s">done / 已完成作业</div>
+      <div class="kbar"><i data-k="bar" style="width:0%"></i></div>
+    </div>
+    <div class="kpi" id="kpi-cpu">
+      <div class="kl"><span class="ki"></span>平均 CPU</div>
+      <div class="kv2"><b data-k="v">–</b><span class="ku">%</span></div>
+      <div class="ks" data-k="s">在线主机均值</div>
+      <div class="kbar"><i data-k="bar" style="width:0%"></i></div>
+    </div>
+    <div class="kpi" id="kpi-temp">
+      <div class="kl"><span class="ki"></span>最高温度</div>
+      <div class="kv2"><b data-k="v">–</b><span class="ku">°C</span></div>
+      <div class="ks" data-k="s">全集群峰值</div>
+      <div class="kbar"><i data-k="bar" style="width:0%"></i></div>
+    </div>
+  </section>
+
+  <!-- 告警收敛：只显示需要人看的异常，全部正常时收成一行 -->
+  <section class="alerts" id="alerts" aria-label="异常收敛"></section>
+
+
+  <section class="blk se-evald" data-page-node-id="cewp0ZC8CSV38XNgmTwgcv">
+    <h2 class="sec" data-page-node-id="EtXbGLrgaBfGAMsJQdatz4">evald 作业线<span class="hint" data-page-node-id="beHoeZr87lzflyRltPX2UR">K3 双实例 · 8788 纯计时（A100）＋ 8791 acc/func 正确性正本（X100）· 一律原生 /metrics · 概览看「1/5/15 分钟交付数 ＋ 最近 3 个作业耗时 ＋ 计数」，「图表」加车道明细与 60min 队列趋势</span><span class="tools"><button class="tbtn" type="button" data-act="detail">图表</button><button class="tbtn" type="button" data-act="fold">折叠</button></span></h2>
+    <div class="topo" aria-label="K3 车道拓扑">
+      <div class="tpo"><span class="td timing"></span><b>:8788 · 纯计时</b><span>A100 簇（cpu8-15）· 厂商 HMP/spine 托管 · 正式计时唯一通道</span></div>
+      <div class="tpo"><span class="td acc"></span><b>:8791 · acc＋func</b><span>X100 · acc=cpu0-5×6 / func=cpu6-7×2 · systemd 单元 evald-acc（锁 0-7 · MemoryMax 12G）</span></div>
+      <div class="tpo"><span class="td host"></span><b>K3 主机 · :9100</b><span>X100 簇（cpu0-7）· node_exporter 温度 / 负载 / 内存 / 磁盘</span></div>
+    </div>
+    <div id="egrid" data-page-node-id="WypB2Q4iKEghjWFiJg9T77"></div>
+  </section>
+
+  <section class="blk se-flow">
+    <h2 class="sec">流水线漏斗 · func → acc → perf<span class="hint">各车道「本次运行以来」完成计数（evald_jobs_completed_total，实例重启清零）· 红色支流＝当道淘汰 · 直发 perf 的基线票会抬高计时节点</span><span class="tools"><button class="tbtn" type="button" data-act="fold">折叠</button></span></h2>
+    <div class="card flowcard">
+      <svg class="flow" viewBox="0 0 960 190" preserveAspectRatio="xMidYMid meet" role="img" aria-label="func acc perf 作业流桑基图"></svg>
+      <div class="flowstats"></div>
+    </div>
+  </section>
+
+  <section class="blk se-host" data-page-node-id="XwpNk55E6k6VdDGFuEIekj">
+    <h2 class="sec" data-page-node-id="IlaH5CX0DMHIGT7vj2daHO">主机资源<span class="hint" data-page-node-id="4szeXQAvwSgfAbkkCqequh">node_exporter · K3 主机（X100 簇 cpu0-7）· 同一根条叠「5m 峰值 / 5m 均值 / 1m 均值 / 最新值」，越近越实 · 「表格」一屏看全指标 · 「图表」加 60min 火花线</span><span class="tools"><span class="seg" id="hostView"><button class="tbtn" type="button" data-v="card" aria-pressed="true">卡片</button><button class="tbtn" type="button" data-v="table" aria-pressed="false">表格</button></span><button class="tbtn" type="button" data-act="detail">图表</button><button class="tbtn" type="button" data-act="fold">折叠</button></span></h2>
+    <div id="hgrid" data-page-node-id="P14I78smhVWklDvGaGwQZY"></div>
+    <div id="htableWrap"><table class="ht"><thead><tr><th>主机</th><th>温度</th><th>内存</th><th>swap</th><th>硬盘</th><th>风扇</th><th>IP</th></tr></thead><tbody id="htbody"></tbody></table></div>
+  </section>
+
+  <footer data-page-node-id="xoPJyG62Wc3jwTtGbXHFTp">
+    数据源 Prometheus <span id="foot-prom" data-page-node-id="KUy05e5esVCZBguBJmMhdK">–</span>（30s 抓取）· 数值 5s 自动刷新 · 趋势 / 直方图每 45s 刷新 · 无外部脚本 · 可用 <code data-page-node-id="6lF6cVnCIMY0I99FAD6U7j">?prom=&lt;url&gt;</code> 覆盖地址（记忆于 localStorage）<br data-page-node-id="vNtZpnv6NaUM2ko48wMvVF">
+    拓扑（2026-09-10 起）：K1 四板整群下线交还，抓取目标已撤；面板收敛为 K3 单板——
+    evald 双实例 :8788 纯计时（A100 簇 cpu8-15，board=K3）＋ :8791 acc+func 正确性正本（board=K3-ACC，acc=cpu0-5×6 / func=cpu6-7×2，
+    守护运行于 systemd 瞬态单元 evald-acc：锁 cpu0-7、MemoryMax 12G、Restart=no，板重启后需手动拉起），
+    配套 8G swap（swappiness=10）即面板「swap 使用」行的防线口径；主机指标走 node_exporter :9100。<br data-page-node-id="C7Xxf31UlRzcCn0KRfI8EK">
+    指标口径：evald 均为服务端原生 /metrics（job="evald"，board 标签即卡片键）；队列 = evald 内存权威口径（timing / correctness / func 车道）；
+    累计计数器 = spool 扫描初值 ＋ 运行期增量，重启不回落；吞吐 = 近 15 分钟 done 增量均值（双实例合计）。<br data-page-node-id="x1">
+    交互：右上角切换明暗主题（Alt+T，记忆于 localStorage）；每个区块可「图表 / 折叠」，主机区可切「卡片 / 表格」，状态同样记忆。
+  </footer>
+</main>
+
+<script>
+(() => {
+"use strict";
+
+/* ================= 配置 ================= */
+const DEFAULT_PROM = "http://127.0.0.1:9090";
+function resolveProm() {
+  let fromQs = null, saved = null;
+  try { fromQs = new URLSearchParams(location.search).get("prom"); } catch (e) { fromQs = null; }
+  if (fromQs && /^https?:\/\//.test(fromQs)) {
+    try { localStorage.setItem("rvg.prom", fromQs); } catch (e) {}
+    return fromQs.replace(/\/+$/, "");
+  }
+  try { saved = localStorage.getItem("rvg.prom"); } catch (e) { saved = null; }
+  if (saved && /^https?:\/\//.test(saved)) return saved.replace(/\/+$/, "");
+  return DEFAULT_PROM;
+}
+const PROM = resolveProm();
+
+const TICK_MS = 5000;               // 即时值刷新
+const RANGE_EVERY = 9;              // 每 9 轮（45s）刷 query_range（重查询节拍不变）
+const RANGE_WINDOW = 3600;          // 火花线窗口 60min
+const RANGE_STEP = 30;              // 与抓取周期一致
+const FETCH_TIMEOUT = 8000;
+const TREND_POINTS = Math.round(600 / RANGE_STEP);  // 趋势箭头：对比 10 分钟前（30s 步长序列）
+const RATE_POINTS = Math.round(600 / (TICK_MS / 1000)); // 速率箭头：对比 10 分钟前（按 TICK_MS 采样）
+
+/* ================= 主机指标白名单（沿用口径，全部限定 job="boards"） =================
+   CPU/负载两行已移除：核级占用改由 CORE_METRICS 每核堆叠柱承担（原 CPU 占用＝全核平均，
+   信息量被柱图覆盖；负载定义见 README——系统内可运行＋不可中断任务数的 1 分钟指数均值） */
+const pct1 = v => v.toFixed(1) + " %";
+const HOST_METRICS = [
+  { id: "temp", label: "CPU 温度", short: "温度", ck: "warn", max: 100, up: 3,
+    q: 'max by (instance) (node_hwmon_temp_celsius{job="boards"})',
+    fmt: v => v.toFixed(0) + " °C", cls: v => v >= 85 ? "bad" : v >= 70 ? "warn" : "" },
+  { id: "mem",  label: "内存占用", short: "内存", ck: "px", max: 100, up: 3,
+    q: '100 * (1 - node_memory_MemAvailable_bytes{job="boards"} / node_memory_MemTotal_bytes{job="boards"})',
+    fmt: pct1, cls: v => v >= 92 ? "bad" : v >= 80 ? "warn" : "" },
+  { id: "swap", label: "swap 使用", short: "swap", ck: "warn", max: 100, up: 3,
+    q: '100 * (1 - node_memory_SwapFree_bytes{job="boards"} / node_memory_SwapTotal_bytes{job="boards"})',
+    fmt: pct1, cls: v => v >= 80 ? "bad" : v >= 60 ? "warn" : "" },
+  { id: "disk", label: "硬盘占用", short: "硬盘", ck: "dimc", max: 100, up: 1,
+    q: '100 * (1 - node_filesystem_avail_bytes{job="boards",mountpoint="/"} / node_filesystem_size_bytes{job="boards",mountpoint="/"})',
+    fmt: pct1, cls: v => v >= 92 ? "bad" : v >= 80 ? "warn" : "" }
+];
+/* 风扇转速：hwmon cros-ec 风扇（右侧标 PWM 占空比；故障位走告警） */
+const FAN_METRIC = { id: "fan", label: "风扇转速", short: "风扇", ck: "k3", max: 6000, auto: true, up: 3,
+  q: 'max by (instance) (node_hwmon_fan_rpm{job="boards"})',
+  fmt: v => intFmt(v) + " RPM", cls: () => "" };
+
+/* 核簇堆叠柱：由 boards target 的 clusters 静态标签驱动（如 "X100:0-7,A100:8-15"）。
+   查询口径＝簇内平均每核 busy%（0-100，与其他行同刻度）；右侧数值＝簇内总占用（满载=N×100）。 */
+let CORE_METRICS = [];
+let lastClusters = null;
+let lastWorkers = null;
+function parseRanges(s) {
+  const t = String(s || "").trim();
+  let m = /^(\d+)-(\d+)$/.exec(t);
+  if (m) return { lo: +m[1], hi: +m[2] };
+  m = /^\d+$/.exec(t);
+  return m ? { lo: +t, hi: +t } : null;
+}
+function setCoresLabel(s) {
+  const cls = [];
+  for (const part of String(s || "").split(",")) {
+    const i = part.indexOf(":");
+    if (i < 0) continue;
+    const rg = parseRanges(part.slice(i + 1));
+    if (rg) cls.push({ name: part.slice(0, i).trim(), lo: rg.lo, hi: rg.hi });
+  }
+  CORE_METRICS = cls.map((cl, i) => {
+    const n = cl.hi - cl.lo + 1;
+    const re = "^(" + Array.from({ length: n }, (x, k) => cl.lo + k).join("|") + ")$";
+    return {
+      id: "cores" + i, kind: "cores", cl, cap: n * 100,
+      label: cl.name + " 核占用", short: cl.name,
+      ck: ["px", "k3", "k1", "warn"][i % 4], max: 100, up: 5,
+      q: '100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{job="boards",cpu=~"' + re + '",mode="idle"}[2m])))',
+      fmt: pct1, cls: v => v >= 92 ? "bad" : v >= 80 ? "warn" : ""
+    };
+  });
+}
+const allMetrics = () => CORE_METRICS.concat(HOST_METRICS, [FAN_METRIC]);
+
+/* worker↔核命名：boards target 的 workers 标签（"acc:0-5,func:6-7"，与 config-acc.json 的
+   lane_resources 分核对账）→ 每核段 tooltip 以 worker 名呈现（acc·w0 … func·w1） */
+let CPU_WORKER = {}, WORKER_SUMMARY = "";
+function setWorkersLabel(s) {
+  CPU_WORKER = {}; WORKER_SUMMARY = "";
+  const lanes = [];
+  for (const part of String(s || "").split(",")) {
+    const i = part.indexOf(":");
+    if (i < 0) continue;
+    const rg = parseRanges(part.slice(i + 1));
+    if (!rg) continue;
+    const lane = part.slice(0, i).trim();
+    lanes.push(lane + "·w0-w" + (rg.hi - rg.lo) + " (cpu" + rg.lo + "-" + rg.hi + ")");
+    for (let c = rg.lo; c <= rg.hi; c++) CPU_WORKER[c] = lane + "·w" + (c - rg.lo);
+  }
+  WORKER_SUMMARY = lanes.join(" ＋ ");
+}
+
+/* ================= 工具 ================= */
+const $ = id => document.getElementById(id);
+/* ---------- 局部写入：只在内容真的变了时才动 DOM ----------
+   每轮无条件 textContent/innerHTML 会重建节点 → 文本闪、hover 丢失、transition 失效。
+   缓存「我们生成的字符串」而不是读回的 innerHTML（后者被浏览器规范化过，比较不可靠）。 */
+const _wText = new WeakMap(), _wHTML = new WeakMap(), _wCls = new WeakMap();
+function setText(el, s) {
+  if (!el) return;
+  s = String(s);
+  if (_wText.get(el) === s) return;
+  _wText.set(el, s);
+  el.textContent = s;
+}
+function setHTML(el, h) {
+  if (!el) return;
+  if (_wHTML.get(el) === h) return;
+  _wHTML.set(el, h);
+  el.innerHTML = h;
+}
+function setCls(el, c) {
+  if (!el) return;
+  if (_wCls.get(el) === c) return;
+  _wCls.set(el, c);
+  el.className = c;
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const intFmt = v => Math.round(v).toLocaleString("zh-CN");
+function agoStr(sec) {
+  // sec = 距今秒数（调用方已用 now - epoch 换算好），不要再减 Date.now()
+  if (sec === null || sec === undefined || !isFinite(sec)) return "–";
+  const m = Math.max(0, Math.round(sec / 60));
+  if (m < 1) return "刚刚";
+  if (m < 60) return m + " 分钟前";
+  const h = m / 60;
+  return (h >= 10 ? Math.round(h) : h.toFixed(1)) + " 小时前";
+}
+
+/* ================= 主题（暗 / 亮 / 跟随系统） ================= */
+const THEME_KEY = "k1mon-theme";
+let theme = "auto";
+try { theme = localStorage.getItem(THEME_KEY) || "auto"; } catch (e) {}
+const mqDark = window.matchMedia("(prefers-color-scheme: dark)");
+const effTheme = () => (theme === "auto" ? (mqDark.matches ? "dark" : "light") : theme);
+const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.4v1.8M12 19.8v1.8M2.4 12h1.8M19.8 12h1.8M5.1 5.1l1.3 1.3M17.6 17.6l1.3 1.3M18.9 5.1l-1.3 1.3M6.4 17.6l-1.3 1.3"/></svg>';
+const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 13.2A8.6 8.6 0 1110.8 3.5a6.9 6.9 0 009.7 9.7z"/></svg>';
+function applyTheme() {
+  const t = effTheme();
+  document.documentElement.setAttribute("data-theme", t);
+  const btn = document.getElementById("themeBtn");
+  if (btn) {
+    btn.innerHTML = (t === "dark" ? MOON : SUN) + "<span>" + (t === "dark" ? "暗色" : "亮色") + "</span>";
+    btn.title = "当前：" + (t === "dark" ? "暗色" : "亮色") + (theme === "auto" ? "（跟随系统）" : "") + " · 点击切换（Alt+T）";
+  }
+  readPalette();
+  if (typeof redrawAll === "function") redrawAll();   // 画布颜色取自 CSS 变量，换肤必须重绘
+}
+function setTheme(t) {
+  theme = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  applyTheme();
+}
+/* 画布调色板：从 CSS 变量读，保证曲线 / 柱体跟着主题走 */
+const PAL = {};
+function readPalette() {
+  const cs = getComputedStyle(document.documentElement);
+  const g = k => ((cs.getPropertyValue(k) || "").trim());
+  PAL.k3 = g("--k3") || "#2dd6d1"; PAL.k1 = g("--k1") || "#6ba4ff";
+  PAL.px = g("--px") || "#b072ff"; PAL.px2 = g("--px2") || "#d9b3ff";
+  PAL.ok = g("--ok") || "#3ecf6a"; PAL.warn = g("--warn") || "#ffb524"; PAL.bad = g("--bad") || "#ff6a5e";
+  PAL.base = g("--plot-base") || "rgba(255,255,255,.07)";
+  PAL.dim = g("--plot-dim") || "rgba(255,255,255,.22)";
+  PAL.peak = g("--plot-peak") || "rgba(255,255,255,.13)";
+  PAL.txt = g("--plot-txt") || "rgba(255,255,255,.38)";
+  PAL.end = g("--plot-end") || "rgba(255,255,255,.9)";
+  PAL.dimc = g("--dim") || "#98a2b8";
+}
+const palOf = k => PAL[k] || PAL.k1;
+/* hex + alpha → rgba（主题色是 hex，直接拼 alpha hex 在部分浏览器不稳） */
+function withA(col, a) {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(col).trim());
+  if (!m) return col;
+  let h = m[1];
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  const v = parseInt(h, 16);
+  return "rgba(" + ((v >> 16) & 255) + "," + ((v >> 8) & 255) + "," + (v & 255) + "," + a + ")";
+}
+
+/* ================= fetch 层（超时 + 错误计数，单条失败不炸整页） ================= */
+let errCtx = null; // 每轮 tick 重置：{ fail, ok }
+async function papi(path, params) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+  try {
+    const usp = new URLSearchParams(params);
+    const r = await fetch(PROM + path + "?" + usp.toString(), { signal: ctrl.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    if (j.status !== "success") throw new Error(j.errorType || "query error");
+    if (errCtx) errCtx.ok++;
+    return j.data.result;
+  } catch (e) {
+    if (errCtx) errCtx.fail++;
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const safeP = p => p.catch(() => null);
+const q  = expr => papi("/api/v1/query", { query: expr });
+const qr = (expr, end, windowS, step) => papi("/api/v1/query_range", {
+  query: expr, start: Math.round(end - windowS), end: Math.round(end), step: String(step)
+});
+const val = r => (r && r.value ? parseFloat(r.value[1]) : null);
+const val0 = arr => (arr && arr.length ? parseFloat(arr[0].value[1]) : null);
+function byLabel(arr, label) {
+  const m = new Map();
+  for (const r of arr || []) m.set(r.metric[label] || "", r);
+  return m;
+}
+/* evald 双源去重（原生 job="evald" ＋ textfile 探针 job="boards"）
+   识别键 = board ＋ 语义标签（lane / state / op）。要点：
+   - 静态标签 job / instance / __name__ / role / fleet 一律不参与：两源 role 不同
+     （"evald · 原生指标" vs "eval-lane"），若计入则键永不碰撞、去重形同虚设，
+     只剩 Map 覆盖的偶然顺序决定取哪个源。
+   - 语义标签必须计入，否则同板多条序列（jobs_total 三态、queued/running 双车道）会塌缩成一条。
+   - boardOnly=true（last_job_info）：op/state 是随作业变化的值，双源不同步时不应各自成条。
+   同键内 job="evald"（原生）优先；原生序列过期消失后自动回退探针。 */
+const DEDUP_DROP = { job: 1, instance: 1, __name__: 1, role: 1, fleet: 1, accent: 1 };
+function dedupBoard(arr, boardOnly) {
+  if (!arr) return arr;
+  const best = new Map();
+  for (const r of arr) {
+    const parts = [];
+    if (!boardOnly) {
+      for (const k of Object.keys(r.metric).sort()) {
+        if (DEDUP_DROP[k] || k === "board") continue;
+        parts.push(k + "=" + r.metric[k]);
+      }
+    }
+    const key = (r.metric.board || "") + "|" + parts.join(",");
+    const prio = r.metric.job === "evald" ? 2 : 1;
+    const cur = best.get(key);
+    if (!cur || prio > cur._prio) best.set(key, Object.assign({ _prio: prio }, r));
+  }
+  return Array.from(best.values());
+}
+/* 样本新鲜度：timestamp() 返回该序列最后一次抓取的样本时间（不是查询时间） */
+/* 多层进度条：同一根条里叠「5m 峰值 / 5m 均值 / 1m 均值 / 最新值」，透明度递增＝越近越实，
+   峰值处再画一根竖线；now=null 表示无数据（宽度归零） */
+function setBar(bar, now, st, m) {
+  if (!bar) return;
+  // auto（负载这类无固定上界的指标）：按「5m 峰值 / 最新值」的较大者缩放，避免条长期顶满
+  const mx = m.auto
+    ? Math.max(1, (st && isFinite(st.max5) ? st.max5 : 0), (isFinite(now) ? now : 0)) * 1.15
+    : (m.max || 100);
+  const p = x => (isFinite(x) ? Math.max(0, Math.min(100, (x / mx) * 100)) : 0).toFixed(1) + "%";
+  bar.className = "mbar g-" + (isFinite(now) ? (m.cls(now) || "norm") : "norm");
+  bar.querySelector(".l5").style.width = p(st && st.max5);
+  bar.querySelector(".a5").style.width = p(st && st.avg5);
+  bar.querySelector(".a1").style.width = p(st && st.avg1);
+  bar.querySelector(".nw").style.width = p(now);
+  const mark = (sel, val) => {
+    const el = bar.querySelector(sel);
+    if (!el) return;
+    if (!isFinite(val)) { el.style.display = "none"; return; }
+    el.style.display = "";
+    el.style.left = p(val);
+  };
+  // 峰值：5m 峰值与最新值取大（瞬时冲高也算）
+  const peak = st && isFinite(st.max5) ? Math.max(st.max5, isFinite(now) ? now : 0) : NaN;
+  mark(".pk.k5", peak);
+  mark(".pk.k5a", st && st.avg5);
+  mark(".pk.k1a", st && st.avg1);
+  mark(".pk.knw", now);
+}
+function setStatVals(bs, st) {
+  if (!bs || bs.length < 3) return;
+  const f = x => (isFinite(x) ? (Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(1)) : "–");
+  setText(bs[0], st && isFinite(st.max5) ? f(st.max5) : "–");
+  setText(bs[1], st && isFinite(st.avg5) ? f(st.avg5) : "–");
+  setText(bs[2], st && isFinite(st.avg1) ? f(st.avg1) : "–");
+}
+
+/* 时长：秒 → 12.3s / 10m12s / 1h02m */
+function fmtDur(sec) {
+  if (!isFinite(sec) || sec < 0) return "–";
+  const p2 = n => String(n).padStart(2, "0");
+  if (sec < 60) return sec.toFixed(1) + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m" + p2(Math.round(sec % 60)) + "s";
+  return Math.floor(sec / 3600) + "h" + p2(Math.floor((sec % 3600) / 60)) + "m";
+}
+const stCls = st => st === "done" ? " okb" : st === "failed" ? " badb" : st === "timeout" ? " warnb" : "";
+/* 最近 N 个作业（依赖 evald 原生 evald_recent_job_* 指标；未上线时给可执行的提示） */
+function renderRecent(el, list) {
+  if (!el) return;
+  if (!list || !list.length) {
+    setHTML(el, '<div class="rhd">最近 3 个作业</div>' +
+      '<div class="rnodata">等待 evald 暴露 <code>evald_recent_job_duration_seconds</code>' +
+      '<br>evald 在内存里保留最近 3 个已完成作业的 duration_s / queue_wait_s / finished_at 即可点亮本块。</div>');
+    return;
+  }
+  setHTML(el, '<div class="rhd">最近 3 个作业<em>执行时间 · 排队等待</em></div>' +
+    list.map(j =>
+      '<div class="ritem"><span class="rop">' + esc(j.op) + '</span>' +
+      '<span class="rdur">' + fmtDur(j.dur) + "</span>" +
+      (isFinite(j.wait) && j.wait >= 1 ? '<span class="rwait2">队 ' + fmtDur(j.wait) + "</span>" : "") +
+      '<span class="rage">' + agoStr(j.ts) + "</span>" +
+      '<span class="badge' + stCls(j.state) + '">' + esc(j.state) + "</span></div>").join(""));
+}
+function ageStr(sec) {
+  if (sec === null || sec === undefined || !isFinite(sec)) return null;
+  if (sec < 90) return null;
+  if (sec < 3600) return Math.round(sec / 60) + " 分钟前";
+  return (sec / 3600).toFixed(1) + " 小时前";
+}
+
+/* ================= 顶栏 / 横幅 ================= */
+const bannerEl = $("banner"), dotEl = $("dot"), stampEl = $("stamp");
+/* ---------- KPI 指挥台 ---------- */
+const KPI = {};
+for (const k of ["online", "tp", "queue", "succ", "cpu", "temp"]) {
+  const el = $("kpi-" + k);
+  if (!el) continue;
+  const r = {};
+  el.querySelectorAll("[data-k]").forEach(nd => { r[nd.dataset.k] = nd; });
+  KPI[k] = { el, r };
+}
+/* v=主数值 sub=副标题 pct=底部条宽度(0-100) state=good/warnc/badc */
+function setKPI(k, v, sub, pct, state, spVals, spColor) {
+  const t = KPI[k];
+  if (!t) return;
+  setText(t.r.v, v);
+  setHTML(t.r.s, sub || "");
+  if (t.r.bar) t.r.bar.style.width = Math.max(0, Math.min(100, pct === null || pct === undefined ? 0 : pct)) + "%";
+  t.el.classList.remove("good", "warnc", "badc");
+  if (state) t.el.classList.add(state);
+  if (t.r.spark) spark(t.r.spark, spVals || [], spColor || PAL.k1);
+}
+/* 集群级趋势（KPI 迷你火花线用，12 分钟窗口） */
+const clusterHist = { tp: [], q: [] };
+function pushCluster(kind, v) {
+  if (v === null || v === undefined || !isFinite(v)) return;
+  const a = clusterHist[kind], now = Date.now();
+  a.push([now, v]);
+  while (a.length && a[0][0] < now - 12 * 60 * 1000) a.shift();
+}
+/* ---------- 告警收敛：只把「需要人看」的抬到最前 ---------- */
+const alertBox = $("alerts");
+let alertSig = null;
+function updateAlerts() {
+  if (!alertBox) return;
+  const items = [];
+  const push = (lv, t, d, el) => items.push({ lv: lv, t: t, d: d, el: el });
+  for (const b of boards.values()) {
+    const n = b.meta.board, c = b.cur || {};
+    if (!b.hasHost) {
+      // 纯 evald 实例（如 K3-ACC）无主机指标，跳过主机侧告警
+    } else if (!b.meta.up) {
+      push("bad", n + " 主机失联", "node_exporter 无响应 · " + b.meta.instance, b.h && b.h.el);
+    } else {
+      if (isFinite(c.temp) && c.temp >= 85) push("bad", n + " 温度 " + c.temp.toFixed(0) + " °C", "≥ 85 °C 危险阈值", b.h && b.h.el);
+      else if (isFinite(c.temp) && c.temp >= 70) push("warn", n + " 温度 " + c.temp.toFixed(0) + " °C", "≥ 70 °C 偏高", b.h && b.h.el);
+      for (const cm of CORE_METRICS) {
+        const cv = c[cm.id];
+        if (!isFinite(cv)) continue;
+        if (cv >= 92) push("bad", n + " " + cm.cl.name + " 核占用 " + cv.toFixed(0) + " %", "簇均 ≥ 92 % · 满载风险", b.h && b.h.el);
+        else if (cv >= 80) push("warn", n + " " + cm.cl.name + " 核占用 " + cv.toFixed(0) + " %", "簇均 ≥ 80 %", b.h && b.h.el);
+      }
+      if (isFinite(c.fanFault) && c.fanFault >= 1) push("bad", n + " 风扇故障", "hwmon fan_fault = 1 · 检查风扇", b.h && b.h.el);
+      if (isFinite(c.mem) && c.mem >= 92) push("bad", n + " 内存 " + c.mem.toFixed(0) + " %", "≥ 92 %", b.h && b.h.el);
+      else if (isFinite(c.mem) && c.mem >= 80) push("warn", n + " 内存 " + c.mem.toFixed(0) + " %", "≥ 80 %", b.h && b.h.el);
+      if (isFinite(c.swap) && c.swap >= 60) {
+        push(c.swap >= 80 ? "bad" : "warn", n + " swap 使用 " + c.swap.toFixed(0) + " %",
+          c.swap >= 80 ? "≥ 80 % · evald-acc 触 MemoryMax 风险升高" : "≥ 60 % · 内存压力上行", b.h && b.h.el);
+      }
+      if (isFinite(c.disk) && c.disk >= 92) push("bad", n + " 硬盘 " + c.disk.toFixed(0) + " %", "≥ 92 % 余量不足", b.h && b.h.el);
+      else if (isFinite(c.disk) && c.disk >= 80) push("warn", n + " 硬盘 " + c.disk.toFixed(0) + " %", "≥ 80 %", b.h && b.h.el);
+    }
+    if (b.hasEvald && b.evaldAlive === false) push("bad", n + " evald 离线",
+      "队列 / 速率停止更新 · " + (b.meta.evaldInstance || "车道不可用") +
+      (b.meta.accent === "acc" ? "（systemd 单元 evald-acc，Restart=no；若 swap 高压疑触 MemoryMax，拉起见 RUNBOOK §7）" : ""),
+      b.e && b.e.el);
+    if (isFinite(c.queue) && c.queue >= 20) {
+      push(c.queue >= 50 ? "bad" : "warn", n + " 队列积压 " + Math.round(c.queue), "排队 " + Math.round(c.queue) + " 个作业待跑", b.e && b.e.el);
+    }
+  }
+  const sig = items.map(a => a.lv + "|" + a.t).join("||");
+  if (sig === alertSig) return;          // 内容未变不重建 DOM，保住 hover / 动画
+  alertSig = sig;
+  if (!items.length) {
+    setHTML(alertBox, '<div class="allclear">✓ <b>全部正常</b><span>无主机失联 · 无阈值越界 · 无队列积压</span></div>');
+    return;
+  }
+  items.sort((x, y) => (x.lv === y.lv ? 0 : x.lv === "bad" ? -1 : 1));
+  const shown = items.slice(0, 8);
+  setHTML(alertBox, shown.map((a, i) =>
+    '<div class="alert lv-' + a.lv + '" data-i="' + i + '" role="button" tabindex="0">' +
+    '<span class="ai">' + (a.lv === "bad" ? "●" : "▲") + '</span>' +
+    '<span class="at"><b>' + esc(a.t) + '</b><span class="ad">' + esc(a.d) + '</span></span></div>').join("") +
+    (items.length > shown.length ? '<div class="allclear">另有 ' + (items.length - shown.length) + ' 条同类告警未展开</div>' : ""));
+  alertBox.querySelectorAll(".alert").forEach(nd => {
+    const go = () => {
+      const a = shown[+nd.dataset.i];
+      if (!a || !a.el) return;
+      const blk = a.el.closest(".blk");
+      if (blk && blk.classList.contains("folded")) { blk.classList.remove("folded"); const fb = blk.querySelector('.tbtn[data-act="fold"]'); if (fb) { setText(fb, "折叠"); fb.setAttribute("aria-pressed", "false"); } }
+      a.el.scrollIntoView({ behavior: "smooth", block: "center" });
+      a.el.classList.remove("flash");
+      void a.el.offsetWidth;
+      a.el.classList.add("flash");
+      setTimeout(() => a.el.classList.remove("flash"), 1600);
+    };
+    nd.addEventListener("click", go);
+    nd.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  });
+}
+function setBanner(nFail, nOk) {
+  if (nFail > 0) {
+    bannerEl.hidden = false;
+    setText($("banner-msg"), nFail + " 个查询失败 · 自动重试中");
+    setText($("banner-ts"), new Date().toLocaleTimeString("zh-CN", { hour12: false }));
+    dotEl.classList.add("err");
+  } else if (nOk > 0) {
+    bannerEl.hidden = true;
+    dotEl.classList.remove("err");
+  }
+}
+
+/* ================= 绘图层 ================= */
+const _cvKey = new WeakMap();
+function cvSig(values) {
+  if (!values || !values.length) return "0";
+  let sum = 0;
+  for (const v of values) if (isFinite(v)) sum += v;
+  return values.length + "|" + sum.toFixed(3) + "|" + values[values.length - 1];
+}
+function spark(cvs, values, color) {
+  if (!cvs) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = cvs.clientWidth, H = cvs.clientHeight;
+  if (!W || !H) return;
+  const key = W + "x" + H + "|" + cvSig(values) + "|" + color;
+  if (_cvKey.get(cvs) === key) return;   // 数据/尺寸/配色都没变 → 保持画布原样
+  _cvKey.set(cvs, key);
+  cvs.width = Math.round(W * dpr); cvs.height = Math.round(H * dpr);
+  const ctx = cvs.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  // 基线：给折线一个落点，空数据时也看得出这里是图表
+  ctx.fillStyle = PAL.base;
+  ctx.fillRect(0, H - 1, W, 1);
+  const idx = [];
+  values.forEach((v, i) => { if (v !== null && v !== undefined && isFinite(v)) idx.push(i); });
+  if (!idx.length) {
+    ctx.fillStyle = PAL.dim;
+    ctx.font = "10px 'Segoe UI', sans-serif";
+    ctx.fillText("暂无数据", 2, H / 2 + 3);
+    return;
+  }
+  const vals = idx.map(i => values[i]);
+  let mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+  if (mx - mn < 1e-9) { mn -= .5; mx += .5; }
+  const pad = (mx - mn) * .14; mn -= pad; mx += pad;
+  const X = i => (values.length <= 1 ? W - 2 : 1 + (i / (values.length - 1)) * (W - 2));
+  const Y = v => H - 2 - ((v - mn) / (mx - mn)) * (H - 5);
+  const lastI = idx[idx.length - 1];
+  // 渐变填充
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, color + "4d"); g.addColorStop(1, color + "00");
+  ctx.beginPath();
+  ctx.moveTo(X(idx[0]), H - 1);
+  for (const i of idx) ctx.lineTo(X(i), Y(values[i]));
+  ctx.lineTo(X(lastI), H - 1);
+  ctx.closePath();
+  ctx.fillStyle = g; ctx.fill();
+  // 折线
+  ctx.beginPath();
+  for (let k = 0; k < idx.length; k++) {
+    const px = X(idx[k]), py = Y(values[idx[k]]);
+    if (k) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  }
+  ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.stroke();
+  // 末端亮点：外光晕 + 实心点 + 白色内芯
+  const ex = X(lastI), ey = Y(values[lastI]);
+  ctx.beginPath(); ctx.arc(ex, ey, 4.6, 0, Math.PI * 2);
+  ctx.fillStyle = color + "2e"; ctx.fill();
+  ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.beginPath(); ctx.arc(ex, ey, 1, 0, Math.PI * 2);
+  ctx.fillStyle = PAL.end; ctx.fill();
+}
+
+/* 趋势箭头：对比 back 个采样点之前（主机=30s 步长，速率=15s 采样）；upGood 决定升降的语义色。
+   返回 {ch, c} 而不是 HTML 片段——配合 setTrend 原地改文本与颜色，避免每轮重建节点。 */
+function trendOf(series, th, upGood, back) {
+  back = back || TREND_POINTS;
+  if (!series || series.length < back + 1) return null;
+  const a = series[series.length - 1], b0 = series[series.length - 1 - back];
+  if (!isFinite(a) || !isFinite(b0)) return null;
+  const d = a - b0;
+  if (d > th) return { ch: "▲", c: upGood ? "var(--ok)" : "var(--bad)" };
+  if (d < -th) return { ch: "▼", c: upGood ? "var(--bad)" : "var(--ok)" };
+  return { ch: "▶", c: "var(--dim)" };
+}
+function setTrend(el, t) {
+  if (!el) return;
+  setText(el, t ? t.ch : "");
+  const c = t ? t.c : "";
+  if (el.style.color !== c) el.style.color = c;
+}
+
+/* ================= 板卡注册表（board 标签为键：job="boards" 出主机卡，job="evald" 出作业卡，
+   evald 实例可独立于主机出卡，如 K3 双实例 K3 / K3-ACC） ================= */
+const egrid = $("egrid"), hgrid = $("hgrid");
+const boards = new Map(); // board -> { meta, hasEvald, hasHost, e:{el,refs}, h:{el,refs}, series{}, qSeries, rateHist[], cur{} }
+
+function syncBoards(upHost, upEvald) {
+  for (const b of boards.values()) { b.hasEvald = false; b.hasHost = false; }
+  const touch = bd => {
+    let b = boards.get(bd);
+    if (!b) {
+      b = { meta: { board: bd }, hasEvald: false, hasHost: false, e: null, h: null, series: {}, stats: {}, qSeries: null, rateHist: [], cur: {} };
+      boards.set(bd, b);
+    }
+    return b;
+  };
+  for (const r of upEvald || []) {
+    const bd = r.metric.board || "";
+    if (!bd) continue;
+    const b = touch(bd);
+    b.hasEvald = true;
+    Object.assign(b.meta, {
+      evaldInstance: r.metric.instance || "",
+      evaldRole: r.metric.role || "",
+      accent: r.metric.accent || "",
+      cores: r.metric.cores || "",
+      fleet: r.metric.fleet || b.meta.fleet || ""
+    });
+  }
+  for (const r of upHost || []) {
+    const bd = r.metric.board || (r.metric.instance || "").split(":")[0];
+    if (!bd) continue;
+    const b = touch(bd);
+    b.hasHost = true;
+    Object.assign(b.meta, {
+      instance: r.metric.instance || "",
+      role: r.metric.role || "",
+      fleet: r.metric.fleet || b.meta.fleet || "",
+      up: parseFloat(r.value[1]) === 1
+    });
+  }
+  // 核簇定义由 boards target 的 clusters 标签驱动；标签变化时重建主机卡（CORE_METRICS 随之更新）
+  let clustersCur = null;
+  for (const r of upHost || []) clustersCur = r.metric.clusters || "";
+  if (clustersCur !== null && clustersCur !== lastClusters) {
+    lastClusters = clustersCur;
+    setCoresLabel(clustersCur);
+    for (const bb of boards.values()) if (bb.h) { bb.h.el.remove(); bb.h = null; }
+  }
+  // worker↔核命名（只影响 tooltip，无需重建卡片）
+  let workersCur = null;
+  for (const r of upHost || []) workersCur = r.metric.workers || "";
+  if (workersCur !== null && workersCur !== lastWorkers) {
+    lastWorkers = workersCur;
+    setWorkersLabel(workersCur);
+  }
+  // 本轮没出现的源：撤对应卡；两源皆无才删整个条目
+  for (const bd of Array.from(boards.keys())) {
+    const b = boards.get(bd);
+    if (!b.hasEvald && b.e) { b.e.el.remove(); b.e = null; }
+    if (!b.hasHost && b.h) { b.h.el.remove(); b.h = null; }
+    if (!b.hasEvald && !b.hasHost) boards.delete(bd);
+  }
+  // 计时实例在前、ACC 次之，其余按 board 名
+  const list = Array.from(boards.values()).sort((a, b) =>
+    ((a.meta.fleet === "k3" ? 0 : 1) - (b.meta.fleet === "k3" ? 0 : 1)) || a.meta.board.localeCompare(b.meta.board));
+  // 建缺失卡片
+  for (const b of list) {
+    if (b.hasEvald && !b.e) b.e = buildEvaldCard(b);
+    if (b.hasHost && !b.h) b.h = buildHostCard(b);
+  }
+  // 归位：仅在顺序真的变化时动 DOM。appendChild 哪怕节点已在位也会重放 CSS 入场动画，
+  // 无条件执行 = 每轮整页卡片一起上浮一次（看起来像"全局刷新"）。
+  placeChildren(egrid, list.map(b => b.e && b.e.el).filter(Boolean));
+  placeChildren(hgrid, list.map(b => b.h && b.h.el).filter(Boolean));
+}
+function placeChildren(parent, nodes) {
+  let i = 0, same = parent.children.length === nodes.length;
+  for (const n of parent.children) {
+    if (n !== nodes[i++]) { same = false; break; }
+  }
+  if (same) return;
+  for (const n of nodes) parent.appendChild(n);
+}
+
+function boardByName(name) {
+  for (const b of boards.values()) if (b.meta.board === name) return b;
+  return null;
+}
+function queueColor(b) {
+  if (b.meta.accent === "acc") return PAL.px;
+  return b.meta.fleet === "k3" ? PAL.k3 : PAL.k1;
+}
+
+/* ---------- evald 卡片（K3 大卡 + 非 K3 车道小卡） ---------- */
+function buildEvaldCard(b) {
+  const big = b.meta.fleet === "k3";
+  const acc = b.meta.accent === "acc";
+  const el = document.createElement("div");
+  const roleTxt = b.meta.evaldRole || b.meta.role || (big ? "evald 评估实例" : "");
+  const roleHtml = roleTxt ? '<span class="role' + (acc ? " r-acc" : big ? " r-k3" : "") + '">' + esc(roleTxt) + "</span>" : "";
+  const inst = b.meta.evaldInstance || b.meta.instance || "";
+  if (big) {
+    el.className = "card ecard big k3c" + (acc ? " accc" : "");
+    el.innerHTML =
+      '<div class="hd"><h3><span class="led" data-r="led"></span>' + esc(b.meta.board) + roleHtml + "</h3>" +
+      '<span class="ip">' + esc(inst) + "</span></div>" +
+      '<div class="stline" data-r="stat"><span class="pill">evald 检测中…</span></div>' +
+      '<div class="lanes" data-r="lanes"></div>' +
+      '<div class="bindrow" data-r="bind"><span class="bnm2" data-r="bindnm">绑定核</span><span class="wgrid" data-r="wgrid"></span><span class="mbar cores" data-r="bindbar"></span><b data-r="bindv">–</b></div>' +
+      '<div class="cnts">' +
+        '<div class="cnt ok"><b data-r="done">–</b><span>done 累计</span></div>' +
+        '<div class="cnt bad"><b data-r="failed">–</b><span>failed 累计</span></div>' +
+        '<div class="cnt warn"><b data-r="timeout">–</b><span>timeout 累计</span></div>' +
+        "<div class=\"cnt\"><b data-r=\"subs\">–</b><span>提交累计</span></div>" +
+      "</div>" +
+      '<div class="cnts c3">' +
+        '<div class="cnt dl"><b data-r="d1">–</b><span>1 分钟交付</span></div>' +
+        '<div class="cnt dl"><b data-r="d5">–</b><span>5 分钟交付</span></div>' +
+        '<div class="cnt dl"><b data-r="d15">–</b><span>15 分钟交付</span></div>' +
+      "</div>" +
+      '<div class="recent" data-r="recent"></div>' +
+      '<div class="sparkrow donly"><span>队列深度 · 近 60 min</span><span class="sv" data-r="qnow">–</span></div>' +
+      '<div class="plot donly"><canvas class="spark" data-r="qspark"></canvas></div>' +
+      '<div class="rateline donly"><span>15 分钟完成速率</span><b data-r="rate">–</b><span class="u">jobs/min</span><span data-r="rateArrow"></span></div>' +
+      '<div class="lastjob donly" data-r="lastjob">最近完成作业：–</div>';
+  } else {
+    el.className = "card ecard";
+    el.innerHTML =
+      '<div class="hd"><h3><span class="led" data-r="led"></span>' + esc(b.meta.board) + "</h3>" +
+      '<span class="ip">' + esc(inst) + "</span></div>" +
+      '<div class="stline" data-r="stat"><span class="pill">evald 检测中…</span></div>' +
+      '<div class="lanes sm donly" data-r="lanes"></div>' +
+      '<div class="badges">' +
+        '<span class="badge okb" data-r="done">done –</span>' +
+        '<span class="badge badb" data-r="failed">failed –</span>' +
+        '<span class="badge warnb" data-r="timeout">timeout –</span>' +
+      "</div>" +
+      '<div class="rateline"><span>15 min 完成速率</span><b data-r="rate">–</b><span class="u">jobs/min</span><span data-r="rateArrow"></span></div>' +
+      '<div class="sparkrow donly"><span>队列深度 · 近 60 min</span><span class="sv" data-r="qnow">–</span></div>' +
+      '<div class="plot donly"><canvas class="spark" data-r="qspark"></canvas></div>' +
+      '<div class="grow"></div>';
+  }
+  const refs = {};
+  el.querySelectorAll("[data-r]").forEach(n => { refs[n.dataset.r] = n; });
+  oneShotRise(el);
+  return { el, refs };
+}
+/* 入场动画只放一次：播完立刻摘掉 .rise-once，后续任何 DOM 移动都不会再触发 */
+function oneShotRise(el) {
+  el.classList.add("rise-once");
+  const off = () => el.classList.remove("rise-once");
+  el.addEventListener("animationend", off, { once: true });
+  setTimeout(off, 1200);   // 兜底：动画被禁用/打断时 animationend 不会来
+}
+
+/* 车道行渲染：按指标里实际出现的 lane 出条（新版 evald 可能多出 func 等车道，不能写死），
+   correctness 置顶，全 0 车道半透明；small=true → 单列紧凑（K1 小卡） */
+function renderLanes(el, qd, rd, laneStr, laneRStr, small) {
+  if (!el) return;
+  const lns = Object.keys(qd).concat(Object.keys(rd))
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .sort((x, y) => (x === "correctness" ? -1 : y === "correctness" ? 1 : x < y ? -1 : 1));
+  setHTML(el, lns.length
+    ? lns.map(ln => {
+        const zero = (qd[ln] || 0) === 0 && (rd[ln] || 0) === 0;
+        return '<div class="lane' + (zero ? " lz" : "") + '"><span class="nm">' +
+               esc(ln) + (small ? "" : " 车道") + "</span>" +
+               "<span>排队 <b>" + laneStr(qd[ln]) + "</b> · 运行 <b>" + laneRStr(rd[ln]) + "</b></span></div>";
+      }).join("")
+    : '<div class="kv"><span class="k">车道</span><b>–</b></div>');
+}
+
+/* ---------- 主机卡片（五行指标 + 火花线 + IP 行 + 内核行） ---------- */
+function buildHostCard(b) {
+  const el = document.createElement("div");
+  el.className = "card hcard" + (b.meta.fleet === "k3" ? " k3c" : "");
+  const roleTxt = b.meta.role;
+  let rows = "";
+  for (const m of allMetrics()) {
+    const bar = m.kind === "cores"
+      ? '<span class="mbar cores" data-b="' + m.id + '" data-ck="' + m.ck + '" title="每核一段堆叠 · 满宽=' + m.cap + '%（全核忙）">' +
+        "<i></i>".repeat(m.cl.hi - m.cl.lo + 1) + "</span>"
+      : '<span class="mbar" data-b="' + m.id + '">' +
+        '<i class="l5"></i><i class="a5"></i><i class="a1"></i><i class="nw"></i>' +
+        '<b class="pk k5"></b><b class="pk k5a"></b><b class="pk k1a"></b><b class="pk knw"></b></span>';
+    rows += '<div class="mrow"><span class="mk">' + m.label + '</span>' +
+      '<span class="mcell">' + bar +
+        '<span class="mstat" data-s="' + m.id + '">' +
+          '<span class="ms l5">峰 <b>–</b></span>' +
+          '<span class="ms a5">5m <b>–</b></span>' +
+          '<span class="ms a1">1m <b>–</b></span>' +
+          (m === FAN_METRIC ? '<span class="ms f" data-p="pwm">PWM –</span>' : "") +
+        '</span>' +
+      '</span>' +
+      '<span class="mv" data-v="' + m.id + '"><b data-n="' + m.id + '">–</b><span class="aw" data-a="' + m.id + '"></span></span>' +
+      '<span class="plot donly"><canvas class="spark" data-c="' + m.id + '"></canvas></span></div>';
+  }
+  el.innerHTML =
+    '<div class="hd"><h3><span class="led" data-r="led"></span>' + esc(b.meta.board) +
+    (roleTxt ? '<span class="role' + (b.meta.fleet === "k3" ? " r-k3" : "") + '">' + esc(roleTxt) + "</span>" : "") + "</h3>" +
+    '<span class="ip">' + esc(b.meta.instance) + "</span></div>" +
+    '<div class="kernel" data-r="kernel">连接中…</div>' + rows +
+    '<div class="mrow"><span class="mk">IP 地址</span><span></span><span class="mv" data-v="ip">–</span><span class="donly"></span></div>';
+  const refs = { vals: {}, sparks: {}, bars: {}, statNums: {}, nums: {}, arws: {} };
+  el.querySelectorAll("[data-v]").forEach(n => { refs.vals[n.dataset.v] = n; });
+  el.querySelectorAll("[data-c]").forEach(n => { refs.sparks[n.dataset.c] = n; });
+  el.querySelectorAll("[data-b]").forEach(n => { refs.bars[n.dataset.b] = n; });
+  el.querySelectorAll("[data-s]").forEach(n => { refs.statNums[n.dataset.s] = [].slice.call(n.querySelectorAll("b")); });
+  el.querySelectorAll("[data-n]").forEach(n => { refs.nums[n.dataset.n] = n; });
+  el.querySelectorAll("[data-a]").forEach(n => { refs.arws[n.dataset.a] = n; });
+  refs.led = el.querySelector('[data-r="led"]');
+  refs.kernel = el.querySelector('[data-r="kernel"]');
+  refs.pwmEl = el.querySelector('[data-p="pwm"]');
+  oneShotRise(el);
+  return { el, refs };
+}
+
+/* ---------- 流水线漏斗（func → acc → perf 桑基图） ----------
+   数据＝evald_jobs_completed_total{lane,state}，口径为实例本次运行以来（重启清零）。
+   每道 done＝放行到下一道，failed+timeout+canceled＝当道淘汰（红色渐隐支流）。
+   直发 perf 的基线票会让下游节点高于上游放行量，属已知口径偏差。 */
+const flowSvg = document.querySelector("svg.flow");
+const flowStats = document.querySelector(".flowstats");
+let flowData = null;
+function ribbonD(x1, sy0, sy1, x2, dy0, dy1) {
+  const mx = (x1 + x2) / 2;
+  return "M" + x1 + " " + sy0 +
+    " C" + mx + " " + sy0 + " " + mx + " " + dy0 + " " + x2 + " " + dy0 +
+    " L" + x2 + " " + dy1 +
+    " C" + mx + " " + dy1 + " " + mx + " " + sy1 + " " + x1 + " " + sy1 + " Z";
+}
+function renderFlow() {
+  if (!flowSvg) return;
+  const L = flowData || {};
+  const g = (lane, st) => { const o = L[lane]; return o && o[st] ? o[st] : 0; };
+  const stages = [
+    { key: "func", name: "func 编译", col: "var(--warn)" },
+    { key: "correctness", name: "acc 正确性", col: "var(--px)" },
+    { key: "timing", name: "perf 计时", col: "var(--k3)" }
+  ].map(s => {
+    const pass = g(s.key, "done");
+    const fail = g(s.key, "failed") + g(s.key, "timeout") + g(s.key, "canceled");
+    return { name: s.name, col: s.col, pass, fail, total: pass + fail };
+  });
+  const W = 960, H = 190, pad = 10, nw = 16, top = 46, maxH = 118, nCol = 4;
+  const gap = (W - 2 * pad - nCol * nw) / (nCol - 1);
+  const maxV = Math.max(1, stages[0].total, stages[1].total, stages[2].total);
+  const sc = v => maxH * v / maxV;
+  const cy = top + maxH / 2;
+  const colX = i => pad + i * (nw + gap);
+  const doneN = stages[2].pass;
+  const totalAll = stages[0].total + stages[1].total + stages[2].total;
+  const parts = [];
+  if (!totalAll) {
+    parts.push('<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" fill="var(--dim)" font-size="13">暂无完成计数 · 等待 func → acc → perf 首批作业跑完</text>');
+  } else {
+    // 节点竖条（func / acc / perf / 完赛）
+    const cols = stages.map(s => ({ h: Math.max(2, sc(s.total)), col: s.col, s })).concat([
+      { h: Math.max(2, sc(doneN)), col: "var(--ok)", s: { name: "完赛", pass: doneN, fail: stages[2].fail, total: doneN } }
+    ]);
+    for (let i = 0; i < nCol; i++) {
+      const c = cols[i], x = colX(i), h = c.h, yt = cy - h / 2;
+      parts.push('<rect x="' + x + '" y="' + yt.toFixed(1) + '" width="' + nw + '" height="' + h.toFixed(1) +
+        '" rx="3" fill="' + c.col + '"' + (c.s.total ? "" : ' opacity=".45"') + ">" +
+        "<title>" + esc(c.s.name) + "：共 " + intFmt(c.s.total) + "（过 " + intFmt(c.s.pass) + " / 淘汰 " + intFmt(c.s.fail) + "）</title></rect>");
+      // 首列左对齐、末列右对齐，避免节点名被画布边缘裁切
+      const anch = i === 0 ? "start" : i === nCol - 1 ? "end" : "middle";
+      const lx = i === 0 ? pad - 4 : i === nCol - 1 ? W - pad + 4 : x + nw / 2;
+      parts.push('<text x="' + lx + '" y="' + (top - 12) + '" text-anchor="' + anch + '" fill="var(--fg)" font-size="12" font-weight="600">' + esc(c.s.name) + "</text>");
+      parts.push('<text x="' + lx + '" y="' + (cy + maxH / 2 + 18) + '" text-anchor="' + anch + '" fill="var(--dim)" font-size="11">' + intFmt(c.s.total) + "</text>");
+    }
+    // 放行缎带（过）：i → i+1，宽＝sc(pass)，终点对准下一节点居中
+    for (let i = 0; i < 2; i++) {
+      const s = stages[i];
+      if (!s.pass) continue;
+      const h = Math.max(2, sc(s.pass));
+      const sy0 = cy - sc(s.total) / 2, sy1 = sy0 + h;
+      const dy0 = cy - h / 2, dy1 = cy + h / 2;
+      parts.push('<path d="' + ribbonD(colX(i) + nw, sy0, sy1, colX(i + 1), dy0, dy1) +
+        '" fill="' + s.col + '" opacity=".26"><title>' + esc(s.name) + " → 下一道：" + intFmt(s.pass) + " 票</title></path>");
+    }
+    // 完赛缎带：perf 的过 → 完赛节点
+    if (doneN) {
+      const h = Math.max(2, sc(doneN));
+      const sy0 = cy - sc(stages[2].total) / 2, sy1 = sy0 + h;
+      const dy0 = cy - h / 2, dy1 = cy + h / 2;
+      parts.push('<path d="' + ribbonD(colX(2) + nw, sy0, sy1, colX(3), dy0, dy1) +
+        '" fill="var(--ok)" opacity=".26"><title>perf → 完赛：' + intFmt(doneN) + " 票</title></path>");
+    }
+    // 淘汰支流（红、渐隐短桩）：各道 failed+timeout+canceled
+    for (let i = 0; i < 3; i++) {
+      const s = stages[i];
+      if (!s.fail) continue;
+      const hf = Math.max(2, sc(s.fail));
+      const sy0 = cy - sc(s.total) / 2 + sc(s.pass), sy1 = sy0 + hf;
+      const ex = colX(i) + nw + gap * 0.35;
+      parts.push('<path d="' + ribbonD(colX(i) + nw, sy0, sy1, ex, sy0 + 2, sy1 + 2) +
+        '" fill="var(--bad)" opacity=".32"><title>' + esc(s.name) + " 当道淘汰：" + intFmt(s.fail) + " 票</title></path>");
+      parts.push('<text x="' + (ex + 4) + '" y="' + ((sy0 + sy1) / 2 + 4) + '" fill="var(--bad)" font-size="11">−' + intFmt(s.fail) + "</text>");
+    }
+  }
+  setHTML(flowSvg, parts.join(""));
+  if (flowStats) {
+    const chip = (cls, txt) => '<span class="badge ' + cls + '">' + txt + "</span>";
+    const rate = (a, b) => (a > 0 ? Math.round(b / a * 100) + "%" : "–");
+    let html;
+    if (!totalAll) html = '<span class="badge">尚无数据</span>';
+    else html =
+      chip("", "func 总 " + stages[0].total) + chip("okb", "过 " + stages[0].pass) + chip("badb", "淘汰 " + stages[0].fail) +
+      '<span class="arrow">→</span>' +
+      chip("", "acc 总 " + stages[1].total) + chip("okb", "过 " + stages[1].pass) + chip("badb", "淘汰 " + stages[1].fail) +
+      '<span class="arrow">→</span>' +
+      chip("", "perf 总 " + stages[2].total) + chip("okb", "完赛 " + doneN) + chip("badb", "计时失败 " + stages[2].fail) +
+      chip("", "通过率 func→acc " + rate(stages[0].total, stages[0].pass)) +
+      chip("", "acc→perf " + rate(stages[1].total, stages[1].pass));
+    setHTML(flowStats, html);
+  }
+}
+
+/* ================= 渲染循环 A：evald 作业线 ================= */
+let clusterTp = null, clusterQ = null, succRate = null;
+
+function pushRate(b, v, nowMs) {
+  b.rateHist.push([nowMs, v]);
+  while (b.rateHist.length && b.rateHist[0][0] < nowMs - 12 * 60 * 1000) b.rateHist.shift();
+}
+
+async function refreshEvald(nowSec) {
+  if (!boards.size) return;
+  // evald_* 不限定 job：原生（job="evald"）与 textfile 双源都要命中；
+  // or 模式仅用于「带 board 标签」的聚合（同 label set 去重、原生优先）；
+  // 集群级聚合不用 or：无标签 sum() 两侧都是空 label set，会整侧碰撞丢失（客户端求和，见下）
+  const cntWin = w =>
+    safeP(q('sum by (board) (increase(evald_jobs_total{job="evald",state="done"}[' + w + ']))' +
+      ' or sum by (board) (increase(evald_jobs_total{job!="evald",state="done"}[' + w + ']))'));
+  const [eUp, queued, running, jobs, subs, lastC, lastI, probe, rateBy, natUp, tsArr,
+         d1, d5, d15, rDur, rTs, rWait, cmpQ] = await Promise.all([
+    safeP(q('evald_up')),
+    safeP(q('evald_queued')),
+    safeP(q('evald_running')),
+    safeP(q('evald_jobs_total')),
+    safeP(q('evald_submissions_total')),
+    safeP(q('evald_last_completion_timestamp_seconds')),
+    safeP(q('evald_last_job_info')),
+    safeP(q('evald_probe_success')),
+    safeP(q('sum by (board) (increase(evald_jobs_total{job="evald",state="done"}[15m])) / 15' +
+      ' or sum by (board) (increase(evald_jobs_total{job!="evald",state="done"}[15m])) / 15')),
+    // 原生 target 自身健康（Prometheus 生成）：0=抓不到，序列不存在=未部署原生
+    safeP(q('up{job="evald"}')),
+    // 所选数据源最后一次采样时刻（去重后取原生）
+    safeP(q('timestamp(evald_up)')),
+    // 交付数（绝对计数，不是速率）：1 / 5 / 15 分钟窗口
+    cntWin("1m"), cntWin("5m"), cntWin("15m"),
+    // 最近 3 个作业的执行时间（evald 原生新指标，未上线时为空 → 卡片给出提示）
+    safeP(q('evald_recent_job_duration_seconds')),
+    safeP(q('evald_recent_job_finished_timestamp_seconds')),
+    safeP(q('evald_recent_job_queue_wait_seconds')),
+    // 流水线漏斗：每车道完成计数（按状态拆分）
+    safeP(q('sum by (lane, state) (evald_jobs_completed_total{job="evald"})'))
+  ]);
+  // 桑基图数据：lane → state → 计数
+  flowData = {};
+  for (const r of cmpQ || []) {
+    const ln = r.metric.lane || "", st = r.metric.state || "";
+    (flowData[ln] = flowData[ln] || {})[st] = parseFloat(r.value[1]) || 0;
+  }
+  renderFlow();
+  const have = {
+    up: !!eUp, q: !!queued, r: !!running, jobs: !!jobs, subs: !!subs,
+    ts: !!lastC, info: !!lastI, probe: !!probe, rate: !!rateBy,
+    nat: !!natUp, ts2: !!tsArr
+  };
+  // 交付数（1/5/15 分钟 done 增量）
+  const dlM = { d1: byLabel(d1, "board"), d5: byLabel(d5, "board"), d15: byLabel(d15, "board") };
+  const dlv = (m, bd) => {
+    if (!m || !m.has(bd)) return null;
+    const v = parseFloat(m.get(bd).value[1]);
+    return isFinite(v) ? Math.max(0, Math.round(v)) : null;
+  };
+  // 最近 3 个作业：idx 0=最近一个
+  const recentM = {};
+  const feedRecent = (arr, key) => {
+    for (const r of arr || []) {
+      const bd = r.metric.board || "";
+      const idx = parseInt(r.metric.idx, 10);
+      if (!isFinite(idx) || idx < 0 || idx > 2) continue;
+      const slot = (recentM[bd] = recentM[bd] || {});
+      const j = (slot[idx] = slot[idx] || {});
+      j[key] = parseFloat(r.value[1]);
+      if (r.metric.op) j.op = r.metric.op;
+      if (r.metric.state) j.state = r.metric.state;
+    }
+  };
+  feedRecent(rDur, "dur"); feedRecent(rTs, "ts"); feedRecent(rWait, "wait");
+  const natM = byLabel(natUp, "board");            // board -> up{job="evald"}
+  const tsM = byLabel(dedupBoard(tsArr), "board"); // board -> 样本时间（原生优先）
+  const srcM = byLabel(dedupBoard(eUp), "board");  // board -> 实际生效的数据源序列
+  // 集群吞吐 = per-board 速率之和（客户端求和，避免 or 空标签集碰撞丢板）
+  if (have.rate) {
+    let tp = 0;
+    for (const r of rateBy || []) tp += parseFloat(r.value[1]) || 0;
+    clusterTp = tp;
+  } else {
+    clusterTp = null;
+  }
+  pushCluster("tp", clusterTp);
+
+  const upM = byLabel(dedupBoard(eUp), "board");
+  const probeM = byLabel(dedupBoard(probe), "board");
+  const subsM = byLabel(dedupBoard(subs), "board");
+  const lastCM = byLabel(dedupBoard(lastC), "board");
+  const lastIM = byLabel(dedupBoard(lastI, true), "board");
+  const rateM = byLabel(rateBy, "board");
+  const qM = {}, rM = {}, jobsM = {};
+  for (const r of dedupBoard(queued) || []) { const i = r.metric.board || ""; (qM[i] = qM[i] || {})[r.metric.lane || ""] = parseFloat(r.value[1]); }
+  for (const r of dedupBoard(running) || []) { const i = r.metric.board || ""; (rM[i] = rM[i] || {})[r.metric.lane || ""] = parseFloat(r.value[1]); }
+  for (const r of dedupBoard(jobs) || []) { const i = r.metric.board || ""; (jobsM[i] = jobsM[i] || {})[r.metric.state || ""] = parseFloat(r.value[1]); }
+  // 集群排队 = 各板各车道之和（客户端求和）
+  if (have.q) {
+    let qs = 0;
+    for (const kb of Object.keys(qM)) for (const ln of Object.keys(qM[kb])) qs += qM[kb][ln] || 0;
+    clusterQ = qs;
+  } else {
+    clusterQ = null;
+  }
+  pushCluster("q", clusterQ);
+
+  // 每 3 轮：队列 60min 火花线 ＋ 24h 成功率
+  if (tickN % RANGE_EVERY === 0) {
+    const qser = await safeP(qr('sum by (board) (evald_queued{job="evald"}) or sum by (board) (evald_queued{job!="evald"})', nowSec, RANGE_WINDOW, RANGE_STEP));
+    if (qser) {
+      for (const r of qser) {
+        const b = boardByName(r.metric.board);
+        if (b) b.qSeries = r.values.map(p => parseFloat(p[1]));
+      }
+    }
+    const stQ = ["done", "failed", "timeout"].map(st =>
+      safeP(q('sum(increase(evald_jobs_total{job="evald",state="' + st + '"}[24h]))' +
+        ' or sum(increase(evald_jobs_total{job!="evald",state="' + st + '"}[24h]))')));
+    const stR = await Promise.all(stQ);
+    if (stR.some(x => x !== null)) {
+      const gv = a => (a && a.length ? Math.max(0, parseFloat(a[0].value[1]) || 0) : 0);
+      succRate = { done: gv(stR[0]), fail: gv(stR[1]), to: gv(stR[2]) };
+    }
+  }
+
+  for (const b of boards.values()) {
+    if (!b.e) continue;
+    const R = b.e.refs, bd = b.meta.board; // evald 指标按 board 维度（双源去重后）
+    const eu = have.up && srcM.has(bd) ? parseFloat(srcM.get(bd).value[1]) : null;
+    const pv = have.probe && probeM.has(bd) ? parseFloat(probeM.get(bd).value[1]) : null;
+    // 数据源分级：原生 /metrics（up{job="evald"}）> textfile 探针
+    const nat = have.nat && natM.has(bd) ? parseFloat(natM.get(bd).value[1]) : null;
+    const ageS = (have.ts2 && tsM.has(bd)) ? Math.max(0, nowSec - val(tsM.get(bd))) : null;
+    const ageTxt = ageStr(ageS);
+    const srcKnown = nat !== null || eu !== null;
+    const alive = nat !== null ? nat === 1 : eu === 1;
+    b.evaldAlive = srcKnown ? alive : null;
+    if (have.up || have.nat) {
+      const pills = [];
+      if (!srcKnown) {
+        setCls(R.led, "led off");
+        pills.push('<span class="pill">evald 监控未部署</span>');
+      } else {
+        setCls(R.led, alive ? "led" : "led bad");
+        pills.push(alive ? '<span class="pill ok">evald 在线</span>' : '<span class="pill bad">evald 离线</span>');
+        if (nat === 1) pills.push('<span class="pill">原生 /metrics</span>');
+        else if (nat === 0) pills.push('<span class="pill warn">原生抓取失败 · 回退探针</span>');
+        else pills.push('<span class="pill">textfile 探针</span>');
+        if (pv === 0) pills.push('<span class="pill warn">探针异常</span>');
+        if (ageTxt) pills.push('<span class="pill warn">数据 ' + ageTxt + '</span>');
+      }
+      setHTML(R.stat, pills.join(" "));
+    }
+    const js = jobsM[bd] || {}, qd = qM[bd] || {}, rd = rM[bd] || {};
+    const cntS = s => !have.jobs ? "–" : (js[s] === undefined ? (srcKnown ? "0" : "–") : intFmt(js[s]));
+    const laneStr = v => !have.q ? "–" : (v === undefined ? (srcKnown ? "0" : "–") : String(Math.round(v)));
+    const laneRStr = v => !have.r ? "–" : (v === undefined ? (srcKnown ? "0" : "–") : String(Math.round(v)));
+    // 15min 完成速率（速率序列缺失=0，查询失败保留 –）
+    let rv = null;
+    if (have.rate) rv = rateM.has(b.meta.board) ? val(rateM.get(b.meta.board)) : 0;
+    if (rv !== null && isFinite(rv)) pushRate(b, rv, Date.now());
+    setText(R.rate, rv === null || !isFinite(rv) ? "–" : rv.toFixed(1));
+    setTrend(R.rateArrow, trendOf(b.rateHist.map(p => p[1]), 0.05, true, RATE_POINTS));
+    // 全车道求和（不写死 timing/correctness，兼容 func 等新增车道）
+    const qSum = have.q ? Object.keys(qd).reduce((a, k) => a + (qd[k] || 0), 0) : null;
+    b.cur = b.cur || {};
+    b.cur.queue = qSum === null ? NaN : qSum;   // 告警用；NaN 让 isFinite 判定为「无数据」
+    setText(R.qnow, qSum === null ? "–" : String(Math.round(qSum)));
+    spark(R.qspark, b.qSeries || [], queueColor(b));
+
+    if (b.meta.fleet === "k3") {
+      setText(R.d1, dlv(dlM.d1, bd) === null ? "–" : intFmt(dlv(dlM.d1, bd)));
+      setText(R.d5, dlv(dlM.d5, bd) === null ? "–" : intFmt(dlv(dlM.d5, bd)));
+      setText(R.d15, dlv(dlM.d15, bd) === null ? "–" : intFmt(dlv(dlM.d15, bd)));
+      const rm = recentM[bd] || {};
+      // finished_timestamp_seconds 是 epoch 秒（服务端契约）；换算成「距今秒数」再交给 agoStr
+      const recentList = [0, 1, 2].map(i => rm[i]).filter(j => j && isFinite(j.dur));
+      for (const j of recentList) {
+        // 仅当值像真实 epoch（>1e9）才换算；0/缺失视为无效 → agoStr 显示 "–"
+        if (isFinite(j.ts) && j.ts > 1e9) j.ts = Math.max(0, nowSec - j.ts);
+        else j.ts = NaN;
+      }
+      renderRecent(R.recent, recentList);
+      setText(R.done, cntS("done"));
+      setText(R.failed, cntS("failed"));
+      setText(R.timeout, cntS("timeout"));
+      setText(R.subs, !have.subs ? "–" : (subsM.has(bd) ? intFmt(val(subsM.get(bd))) : (srcKnown ? "0" : "–")));
+      renderLanes(R.lanes, qd, rd, laneStr, laneRStr, false);
+      const li = have.info ? lastIM.get(bd) : null;
+      if (li) {
+        const st = li.metric.state || "?", op = li.metric.op || "?";
+        const cls = st === "done" ? " okb" : st === "failed" ? " badb" : st === "timeout" ? " warnb" : "";
+        const lc = have.ts && lastCM.has(bd) ? Math.max(0, nowSec - val(lastCM.get(bd))) : null;
+        setHTML(R.lastjob, "最近完成作业 <span class='op'>" + esc(op) + "</span> <span class='badge" + cls + "'>" + esc(st) + "</span> · " + agoStr(lc));
+      } else if (!have.info) {
+        setText(R.lastjob, "最近完成作业：–");
+      }
+    } else {
+      setText(R.done, "done " + cntS("done"));
+      setText(R.failed, "failed " + cntS("failed"));
+      setText(R.timeout, "timeout " + cntS("timeout"));
+      renderLanes(R.lanes, qd, rd, laneStr, laneRStr, true);
+    }
+  }
+}
+
+/* ================= 渲染循环 B：主机资源 ================= */
+/* ---------- 每核堆叠条：满宽＝簇容量（N×100%），每段一核，≥90% 变红；签名比对避免重写 ---------- */
+const _coreSig = new WeakMap();
+function setCoreBar(bar, m, cores) {
+  if (!bar) return;
+  const segs = bar.querySelectorAll("i");
+  if (!segs.length) return;
+  const vals = [];
+  let sig = "";
+  for (let c = m.cl.lo; c <= m.cl.hi; c++) {
+    const v = cores && isFinite(cores[c]) ? Math.max(0, Math.min(100, cores[c])) : 0;
+    vals.push(v);
+    sig += v.toFixed(0) + ",";
+  }
+  if (_coreSig.get(bar) === sig) return;
+  _coreSig.set(bar, sig);
+  for (let i = 0; i < segs.length; i++) {
+    const cpu = m.cl.lo + i;
+    const wname = CPU_WORKER[cpu] ? CPU_WORKER[cpu] + " (" + m.cl.name + " cpu" + cpu + ")" : m.cl.name + " cpu" + cpu;
+    segs[i].style.width = (vals[i] / m.cap * 100).toFixed(2) + "%";
+    segs[i].className = vals[i] >= 90 ? "hot" : "";
+    segs[i].title = wname + " · " + vals[i].toFixed(0) + " %";
+  }
+}
+function coreSum(m, cores) {
+  let sum = 0;
+  for (let c = m.cl.lo; c <= m.cl.hi; c++) { const v = cores && cores[c]; if (isFinite(v)) sum += v; }
+  return sum;
+}
+/* ---------- evald 实例卡「绑定核」迷你条：核占用数据在主机板对象上，跨板取数 ---------- */
+function updateBindStrips() {
+  let hostB = null;
+  for (const b of boards.values()) if (b.hasHost && b.cur && b.cur.cores) { hostB = b; break; }
+  for (const b of boards.values()) {
+    if (!b.e || !b.e.refs || !b.e.refs.bind) continue;
+    const R = b.e.refs;
+    const rg = parseRanges(b.meta.cores);
+    if (!rg) { setHTML(R.bind, ""); continue; }
+    rg.name = "cpu";
+    let cname = "cpu " + b.meta.cores;
+    for (const cm of CORE_METRICS) {
+      if (rg.lo >= cm.cl.lo && rg.hi <= cm.cl.hi) {
+        rg.name = cm.cl.name;
+        cname = cm.cl.name + " · cpu" + b.meta.cores;
+        break;
+      }
+    }
+    const cap = (rg.hi - rg.lo + 1) * 100;
+    const bar = R.bindbar, nSeg = rg.hi - rg.lo + 1;
+    // 有 worker↔核映射 → 渲染 8 个 worker 瓦片（一眼可见每 worker 负载）；
+    // 无映射（如 A100 计时：单 worker 不钉核）→ 回退整条堆叠柱
+    if (CPU_WORKER[rg.lo] !== undefined) {
+      const cores = hostB ? hostB.cur.cores : null;
+      const tiles = [];
+      let sum = 0;
+      for (let c = rg.lo; c <= rg.hi; c++) {
+        const v = cores && isFinite(cores[c]) ? Math.max(0, Math.min(100, cores[c])) : 0;
+        sum += v;
+        const wn = CPU_WORKER[c] || "w" + (c - rg.lo);
+        const col = wn.indexOf("func") === 0 ? "var(--warn)" : "var(--px)";
+        tiles.push('<div class="wtile" title="' + esc(wn) + " · " + v.toFixed(0) + ' %（核 cpu' + c + '）">' +
+          '<span class="wn">' + esc(wn) + "</span>" +
+          '<span class="wb"><i class="' + (v >= 90 ? "hot" : "") + '" style="width:' + v.toFixed(0) + "%;background:" + col + '"></i></span>' +
+          '<b class="wp">' + v.toFixed(0) + "%</b></div>");
+      }
+      setHTML(R.wgrid, tiles.join(""));
+      setHTML(bar, "");
+      setText(R.bindnm, cname);
+      setText(R.bindv, hostB ? intFmt(Math.round(sum)) + "/" + cap : "–");
+    } else {
+      setHTML(R.wgrid, "");
+      if (+bar.dataset.n !== nSeg) {
+        bar.dataset.n = nSeg;
+        setHTML(bar, "<i></i>".repeat(nSeg));
+        bar.dataset.ck = b.meta.accent === "acc" ? "px" : "k3";
+      }
+      setCoreBar(bar, { cl: rg, cap }, hostB ? hostB.cur.cores : null);
+      setText(R.bindnm, cname);
+      setText(R.bindv, hostB ? intFmt(Math.round(coreSum({ cl: rg }, hostB.cur.cores))) + "/" + cap : "–");
+    }
+  }
+}
+
+async function refreshHosts(nowSec) {
+  if (!boards.size) return;
+  const METRICS = allMetrics();
+  const unQ = safeP(q('node_uname_info{job="boards"}'));
+  const addrQ = safeP(q('node_network_address_info{job="boards",scope="global",device!="lo",address=~"[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+"}'));
+  const coreQ = safeP(q('100 * (1 - sum by (instance, cpu) (rate(node_cpu_seconds_total{job="boards",mode="idle"}[2m])))'));
+  const pwmQ = safeP(q('max by (instance) (node_hwmon_pwm{job="boards"})'));
+  const faultQ = safeP(q('max by (instance) (node_hwmon_fan_fault{job="boards"})'));
+  const hotQ = safeP(q('max by (instance, chip) (node_hwmon_temp_celsius{job="boards"})'));
+  const chipsQ = safeP(q('node_hwmon_chip_names{job="boards"}'));
+  const [insts, coreArr, pwmArr, faultArr, hotArr, chipsArr, uname, addr] = await Promise.all([
+    Promise.all(METRICS.map(m => safeP(q(m.q)))), coreQ, pwmQ, faultQ, hotQ, chipsQ, unQ, addrQ
+  ]);
+  const unM = byLabel(uname, "instance");
+  const pwmM = byLabel(pwmArr, "instance");
+  const faultM = byLabel(faultArr, "instance");
+  const chipName = {};
+  for (const r of chipsArr || []) chipName[r.metric.chip] = r.metric.chip_name || r.metric.chip;
+  const addrAll = {};
+  for (const r of addr || []) {
+    const i = r.metric.instance || "";
+    (addrAll[i] = addrAll[i] || new Set()).add(r.metric.address || "");
+  }
+  const coresAll = {};
+  for (const r of coreArr || []) {
+    const i = r.metric.instance || "", c = parseInt(r.metric.cpu, 10);
+    if (isFinite(c)) (coresAll[i] = coresAll[i] || {})[c] = parseFloat(r.value[1]);
+  }
+  const curM = insts.map(arr => byLabel(arr, "instance"));
+
+  // 每 3 轮：火花线窗口＋窗口统计（子查询 30s 步长，与抓取周期一致）
+  if (tickN % RANGE_EVERY === 0) {
+    for (let k = 0; k < METRICS.length; k++) {
+      const rs = await safeP(qr(METRICS[k].q, nowSec, RANGE_WINDOW, RANGE_STEP));
+      for (const r of rs || []) {
+        const b = boards.get(r.metric.board || "");
+        if (b) b.series[METRICS[k].id] = r.values.map(p => parseFloat(p[1]));
+      }
+    }
+    for (let k = 0; k < METRICS.length; k++) {
+      const expr = METRICS[k].q;
+      const agg = await Promise.all([
+        safeP(q("max_over_time((" + expr + ")[5m:30s])")),
+        safeP(q("avg_over_time((" + expr + ")[5m:30s])")),
+        safeP(q("avg_over_time((" + expr + ")[1m:30s])"))
+      ]);
+      const put = (arr, key) => {
+        for (const r of arr || []) {
+          const b = boards.get(r.metric.board || "");
+          if (!b) continue;
+          b.stats = b.stats || {};
+          b.stats[METRICS[k].id] = b.stats[METRICS[k].id] || {};
+          const v = parseFloat(r.value[1]);
+          if (isFinite(v)) b.stats[METRICS[k].id][key] = v;
+        }
+      };
+      put(agg[0], "max5"); put(agg[1], "avg5"); put(agg[2], "avg1");
+    }
+  }
+
+  for (const b of boards.values()) {
+    if (!b.h) continue;
+    const R = b.h.refs, inst = b.meta.instance;
+    const alive = b.meta.up === true;
+    b.h.el.classList.toggle("down", !alive);
+    setCls(R.led, "led" + (alive ? "" : " bad"));
+    if (!alive) {
+      setText(R.kernel, "失联 · node_exporter 无响应");
+      b.cur.cores = null;
+      delete b.cur.fanFault;
+      if (R.pwmEl) setText(R.pwmEl, "PWM –");
+      for (const id of Object.keys(R.vals)) {
+        if (id !== "ip") setText(R.vals[id], "–");
+      }
+      for (const mm of METRICS) {
+        if (mm.kind === "cores") setCoreBar(R.bars[mm.id], mm, null);
+        else setBar(R.bars[mm.id], null, null, mm);
+        setStatVals(R.statNums[mm.id], null);
+      }
+      continue;
+    }
+    const cores = coresAll[inst] || null;
+    b.cur.cores = cores;
+    const fv = faultM.has(inst) ? val(faultM.get(inst)) : null;
+    if (isFinite(fv)) b.cur.fanFault = fv; else delete b.cur.fanFault;
+    const u = unM.get(inst);
+    if (u) setText(R.kernel, (u.metric.nodename || "") + " · 内核 " + (u.metric.release || ""));
+    const ips = addrAll[inst];
+    if (ips && ips.size) { setText(R.vals.ip, Array.from(ips).join(" / ")); b.ipText = Array.from(ips).join(" / "); }
+    for (let k = 0; k < METRICS.length; k++) {
+      const m = METRICS[k];
+      const series = b.series[m.id] || [];
+      let v = curM[k].has(inst) ? val(curM[k].get(inst)) : null;
+      if (v === null && series.length) v = series[series.length - 1];
+      if (v !== null && isFinite(v)) b.cur[m.id] = v;
+      const elv = R.vals[m.id];
+      if (v === null || !isFinite(v)) {
+        setText(elv, "–");
+        elv.className = "mv";
+        continue;
+      }
+      // 右侧数值：核簇行＝簇内总占用/容量；温度行尾标最热区名；风扇行尾标 PWM 占空比
+      if (m.kind === "cores") setText(R.nums[m.id], intFmt(Math.round(coreSum(m, cores))) + "/" + m.cap);
+      else setText(R.nums[m.id], m.fmt(v));
+      if (m.id === "temp") {
+        let hotChip = "", hotV = -1;
+        for (const r of hotArr || []) {
+          if ((r.metric.instance || "") !== inst) continue;
+          const hv = parseFloat(r.value[1]);
+          if (isFinite(hv) && hv > hotV) { hotV = hv; hotChip = r.metric.chip || ""; }
+        }
+        setTrend(R.arws[m.id], null);
+        setText(R.arws[m.id], hotChip ? String(chipName[hotChip] || hotChip).replace(/^thermal_thermal_|^thermal_/, "") : "");
+      } else if (m === FAN_METRIC) {
+        const pwm = pwmM.has(inst) ? val(pwmM.get(inst)) : null;
+        setTrend(R.arws[m.id], null);
+        if (R.pwmEl) setText(R.pwmEl, isFinite(pwm) ? "PWM " + Math.round(pwm / 2.55) + "%" : "PWM –");
+      } else {
+        setTrend(R.arws[m.id], trendOf(series, m.up, false));
+      }
+      setCls(elv, "mv " + m.cls(v));
+      if (m.kind === "cores") setCoreBar(R.bars[m.id], m, cores);
+      else setBar(R.bars[m.id], v, b.stats[m.id], m);
+      setStatVals(R.statNums[m.id], b.stats[m.id]);
+      spark(R.sparks[m.id], series, palOf(m.ck));
+    }
+  }
+  updateBindStrips();
+  if (viewState.host === "table") renderHostTable();
+}
+
+/* ---------- 主机表格视图（细化数据：一屏扫全部指标；列随核簇定义动态生成） ---------- */
+function renderHostTable() {
+  const tb = $("htbody");
+  if (!tb) return;
+  const METRICS = CORE_METRICS.concat(HOST_METRICS, [FAN_METRIC]);
+  const trh = document.querySelector("#htableWrap thead tr");
+  if (trh) {
+    let h = "<th>主机</th>";
+    for (const m of METRICS) h += "<th>" + esc(m.short || m.label) + "</th>";
+    setHTML(trh, h + "<th>IP</th>");
+  }
+  const rows = [];
+  const list = Array.from(boards.values()).sort((a, b) =>
+    ((a.meta.fleet === "k3" ? 0 : 1) - (b.meta.fleet === "k3" ? 0 : 1)) || a.meta.board.localeCompare(b.meta.board));
+  for (const b of list) {
+    if (!b.hasHost) continue;   // 纯 evald 实例无主机指标，不进表格
+    const c = b.cur || {};
+    const td = m => {
+      const v = c[m.id];
+      if (!isFinite(v)) return '<td class="num">–</td>';
+      const st = m.cls(v);
+      const s = b.stats && b.stats[m.id];
+      const tt = s && isFinite(s.max5)
+        ? ' title="5m 峰 ' + m.fmt(s.max5) + " · 5m 均 " + m.fmt(s.avg5) + " · 1m 均 " + m.fmt(s.avg1) + '"'
+        : "";
+      const txt = m.kind === "cores" ? Math.round(v) + " %" : m.fmt(v);
+      return '<td class="num' + (st ? " v-" + st : "") + '"' + tt + ">" + txt + "</td>";
+    };
+    rows.push("<tr><td><span class=\"st" + (b.meta.up ? "" : " bad") + '"></span>' + esc(b.meta.board) +
+      '<span class="ipc">' + esc(b.meta.instance) + "</span></td>" +
+      METRICS.map(td).join("") +
+      "<td>" + esc(b.ipText || "–") + "</td></tr>");
+  }
+  setHTML(tb, rows.join(""));
+}
+
+/* ================= 顶栏汇总（写入 KPI 指挥台） ================= */
+const TP_FULL = 12;      // 吞吐条满格基准 jobs/min（当前集群量级的经验值）
+const Q_FULL = 50;       // 队列条满格基准
+function updateSummary() {
+  let evaldOn = 0, evaldTot = 0, hostOn = 0, hostTot = 0;
+  let cpuSum = 0, cpuN = 0, tempMax = null;
+  for (const b of boards.values()) {
+    if (b.hasEvald) { evaldTot++; if (b.evaldAlive === true) evaldOn++; }
+    if (b.hasHost) { hostTot++; if (b.meta.up) hostOn++; }
+    if (b.cur && b.cur.cores) {
+      for (const k of Object.keys(b.cur.cores)) { const v = b.cur.cores[k]; if (isFinite(v)) { cpuSum += v; cpuN++; } }
+    }
+    if (b.cur && isFinite(b.cur.temp)) tempMax = tempMax === null ? b.cur.temp : Math.max(tempMax, b.cur.temp);
+  }
+  const cpuAvg = cpuN ? cpuSum / cpuN : null;
+
+  setKPI("online", evaldOn + " / " + evaldTot,
+    "evald 实例 · exporter <b>" + hostOn + "/" + hostTot + "</b>",
+    evaldTot ? (evaldOn / evaldTot) * 100 : 0,
+    !evaldTot ? "" : evaldOn === evaldTot ? "good" : evaldOn === 0 ? "badc" : "warnc");
+
+  const tp = clusterTp === null || !isFinite(clusterTp) ? null : clusterTp;
+  const tpHist = clusterHist.tp.map(p => p[1]);
+  const tpPeak = tpHist.length ? Math.max.apply(null, tpHist.concat([tp === null ? 0 : tp])) : null;
+  setKPI("tp", tp === null ? "–" : tp.toFixed(1),
+    tpPeak === null ? "近 15 min · 双实例合计" : "近 15 min 合计 · 峰值 " + tpPeak.toFixed(1),
+    tp === null ? 0 : Math.min(100, (tp / TP_FULL) * 100), tp === null ? "" : "good",
+    tpHist, PAL.k3);
+
+  const q = clusterQ === null || !isFinite(clusterQ) ? null : clusterQ;
+  setKPI("queue", q === null ? "–" : intFmt(q),
+    q === null ? "双实例各车道求和" : q >= 20 ? "积压偏高 · 需要关注" : "水位正常",
+    q === null ? 0 : Math.min(100, (q / Q_FULL) * 100),
+    q === null ? "" : q >= 50 ? "badc" : q >= 20 ? "warnc" : "good",
+    clusterHist.q.map(p => p[1]), PAL.k1);
+
+  let sp = null;
+  if (succRate) {
+    const tot = succRate.done + succRate.fail + succRate.to;
+    if (tot > 0) sp = (succRate.done / tot) * 100;
+  }
+  setKPI("succ", sp === null ? "–" : sp.toFixed(1),
+    sp === null ? "近 24h 无完成作业" :
+      intFmt(succRate.done) + " done · " + intFmt(succRate.fail + succRate.to) + " 异常",
+    sp === null ? 0 : sp,
+    sp === null ? "" : sp >= 95 ? "good" : sp >= 85 ? "warnc" : "badc");
+
+  setKPI("cpu", cpuAvg === null ? "–" : cpuAvg.toFixed(1),
+    cpuAvg === null ? "无数据" : "全部 " + cpuN + " 核均值",
+    cpuAvg === null ? 0 : cpuAvg,
+    cpuAvg === null ? "" : cpuAvg >= 90 ? "badc" : cpuAvg >= 70 ? "warnc" : "good");
+
+  setKPI("temp", tempMax === null ? "–" : tempMax.toFixed(0),
+    tempMax === null ? "无数据" : "全集群峰值",
+    tempMax === null ? 0 : Math.min(100, tempMax),
+    tempMax === null ? "" : tempMax >= 85 ? "badc" : tempMax >= 70 ? "warnc" : "good");
+}
+
+/* ================= 视图控制（折叠 / 图表 / 主机视图 / 主题） ================= */
+const VIEW_KEY = "k1mon-view";
+let viewState = { host: "card" };
+try { viewState = Object.assign(viewState, JSON.parse(localStorage.getItem(VIEW_KEY) || "{}")); } catch (e) {}
+function saveView() { try { localStorage.setItem(VIEW_KEY, JSON.stringify(viewState)); } catch (e) {} }
+
+function setHostView(v) {
+  viewState.host = v; saveView();
+  const g = $("hgrid"), t = $("htableWrap");
+  if (g) g.classList.toggle("off", v === "table");
+  if (t) t.classList.toggle("on", v === "table");
+  const segs = document.querySelectorAll("#hostView .tbtn");
+  for (const btn of segs) btn.setAttribute("aria-pressed", String(btn.dataset.v === v));
+  if (v === "table") renderHostTable(); else redrawAll();
+}
+function initTools() {
+  const secs = document.querySelectorAll(".blk");
+  for (const sec of secs) {
+    const id = sec.classList.contains("se-evald") ? "evald" : sec.classList.contains("se-flow") ? "flow" : "host";
+    const dBtn = sec.querySelector('.tbtn[data-act="detail"]');
+    const fBtn = sec.querySelector('.tbtn[data-act="fold"]');
+    if (dBtn) {
+      const on = !!viewState[id + "Det"];
+      sec.classList.toggle("det", on);
+      dBtn.setAttribute("aria-pressed", String(on));
+      dBtn.addEventListener("click", () => {
+        const v = !sec.classList.contains("det");
+        sec.classList.toggle("det", v);
+        dBtn.setAttribute("aria-pressed", String(v));
+        viewState[id + "Det"] = v; saveView();
+        redrawAll();
+      });
+    }
+    if (fBtn) {
+      const on = !!viewState[id + "Fold"];
+      sec.classList.toggle("folded", on);
+      fBtn.textContent = on ? "展开" : "折叠";
+      fBtn.setAttribute("aria-pressed", String(on));
+      fBtn.addEventListener("click", () => {
+        const v = !sec.classList.contains("folded");
+        sec.classList.toggle("folded", v);
+        fBtn.textContent = v ? "展开" : "折叠";
+        fBtn.setAttribute("aria-pressed", String(v));
+        viewState[id + "Fold"] = v; saveView();
+        if (!v) redrawAll();
+      });
+    }
+  }
+  for (const btn of document.querySelectorAll("#hostView .tbtn")) {
+    btn.addEventListener("click", () => setHostView(btn.dataset.v));
+  }
+  const tb = $("themeBtn");
+  if (tb) tb.addEventListener("click", () => setTheme(effTheme() === "dark" ? "light" : "dark"));
+  document.addEventListener("keydown", e => {
+    if (e.altKey && (e.key === "t" || e.key === "T")) setTheme(effTheme() === "dark" ? "light" : "dark");
+  });
+  if (mqDark.addEventListener) mqDark.addEventListener("change", () => { if (theme === "auto") applyTheme(); });
+  for (const k of Object.keys(KPI)) oneShotRise(KPI[k].el);
+  setHostView(viewState.host === "table" ? "table" : "card");
+}
+
+/* ================= resize 重绘（防抖，全部来自缓存） ================= */
+function redrawAll() {
+  for (const b of boards.values()) {
+    if (b.e) {
+      spark(b.e.refs.qspark, b.qSeries || [], queueColor(b));
+    }
+    if (b.h) {
+      for (const m of allMetrics()) spark(b.h.refs.sparks[m.id], b.series[m.id] || [], palOf(m.ck));
+    }
+  }
+  updateSummary();     // KPI 迷你火花线同样取缓存重绘
+}
+let rzTimer = 0;
+window.addEventListener("resize", () => {
+  clearTimeout(rzTimer);
+  rzTimer = setTimeout(redrawAll, 200);
+});
+
+/* ================= 主循环（15s；防重入；常开不泄漏） ================= */
+let tickN = 0, busy = false;
+async function tick() {
+  if (busy) return;
+  busy = true;
+  errCtx = { fail: 0, ok: 0 };
+  const nowMs = Date.now();
+  const nowSec = Math.floor(nowMs / 1000);
+  try {
+    const [hostUp, evaldUp] = await Promise.all([safeP(q('up{job="boards"}')), safeP(q('up{job="evald"}'))]);
+    if (hostUp !== null && evaldUp !== null) syncBoards(hostUp, evaldUp); // 任一失败保留上次板卡清单，不清空页面
+    await Promise.all([refreshEvald(nowSec), refreshHosts(nowSec)]);
+    updateSummary();
+    updateAlerts();
+    setText(stampEl, new Date(nowMs).toLocaleTimeString("zh-CN", { hour12: false }));
+  } finally {
+    setBanner(errCtx.fail, errCtx.ok);
+    errCtx = null;
+    busy = false;
+    tickN++;
+  }
+}
+
+/* ================= 启动 ================= */
+$("foot-prom").textContent = PROM;
+applyTheme();
+initTools();
+tick();
+setInterval(tick, TICK_MS);
+})();
+</script>
+</body>
+</html>
