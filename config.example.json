@@ -1,0 +1,5 @@
+{
+  "listen": "0.0.0.0:18800",
+  "data_dir": "/home/c4y/.local/share/rvbench/manager",
+  "victoriametrics": null
+}

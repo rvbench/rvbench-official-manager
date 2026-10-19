@@ -1,0 +1,7 @@
+target/
+__pycache__/
+*.py[cod]
+data/
+manager-data/
+*.tmp
+config.json
