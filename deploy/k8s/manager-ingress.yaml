@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: manager
+  namespace: rvbench
+  labels:
+    app: rvbench-manager
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 18800
+      targetPort: 18800
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: manager
+  namespace: rvbench
+  labels:
+    app: rvbench-manager
+subsets:
+  - addresses:
+      - ip: 100.70.103.65
+    ports:
+      - name: http
+        port: 18800
+        protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: manager
+  namespace: rvbench
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: rvbench.hk.c4y.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: manager
+                port:
+                  number: 18800
+  tls:
+    - hosts:
+        - rvbench.hk.c4y.dev

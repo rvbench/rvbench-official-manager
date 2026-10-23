@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rvbench
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: manager-config
+  namespace: rvbench
+data:
+  config.json: |
+    {
+      "listen": "100.70.103.65:18800",
+      "data_dir": "/var/lib/rvbench/manager",
+      "victoriametrics": null
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: manager-data
+  namespace: rvbench
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manager
+  namespace: rvbench
+  labels:
+    app: rvbench-manager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rvbench-manager
+  template:
+    metadata:
+      labels:
+        app: rvbench-manager
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: manager
+          image: rvbench-manager:0.1.0
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/rvbench/config.json"]
+          ports:
+            - name: http
+              containerPort: 18800
+          volumeMounts:
+            - name: config
+              mountPath: /etc/rvbench
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/rvbench
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              host: 100.70.103.65
+              path: /cluster/workers
+              port: 18800
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              host: 100.70.103.65
+              path: /cluster/workers
+              port: 18800
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: manager-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: manager-data
