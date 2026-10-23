@@ -1512,7 +1512,7 @@ dependencies = [
 [[package]]
 name = "rvbench-protocol"
 version = "0.1.0"
-source = "git+https://github.com/rvbench/rvbench-core-rust.git?rev=52356fe8220762425b5b53926d84b5f118a5a304#52356fe8220762425b5b53926d84b5f118a5a304"
+source = "git+https://github.com/rvbench/rvbench-core-rust.git?rev=6dbacf8d9d24140c6436e08fd8c495ef0b9793bc#6dbacf8d9d24140c6436e08fd8c495ef0b9793bc"
 dependencies = [
  "anyhow",
  "axum",

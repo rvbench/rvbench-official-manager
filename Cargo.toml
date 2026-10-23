@@ -17,7 +17,7 @@ axum = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
 fs2 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-rvbench-protocol = { git = "https://github.com/rvbench/rvbench-core-rust.git", rev = "52356fe8220762425b5b53926d84b5f118a5a304" }
+rvbench-protocol = { git = "https://github.com/rvbench/rvbench-core-rust.git", rev = "6dbacf8d9d24140c6436e08fd8c495ef0b9793bc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip"] }
 tokio = { version = "1", features = ["full"] }

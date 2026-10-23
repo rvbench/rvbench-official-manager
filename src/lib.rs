@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 pub mod observability;
 use rvbench_protocol::console::{Console, LeaseView};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -119,7 +119,7 @@ impl Manager {
             .tx(|s| {
                 Ok(s.workers
                     .values()
-                    .filter(|n| n.info.delivery != DeliveryMode::Pull)
+                    .filter(|n| n.info.delivery == DeliveryMode::Push)
                     .map(|n| n.info.clone())
                     .collect::<Vec<_>>())
             })
@@ -138,6 +138,9 @@ impl Manager {
                                 && g.assignment.instance_id == instance
                                 && !g.acknowledged
                                 && !terminal(&s.jobs[&g.assignment.job_id].state)
+                                // An expired grant is undeliverable; re-allocate instead of
+                                // retrying it forever.
+                                && g.assignment.expires_at > seconds()
                         })
                         .map(|g| g.assignment.clone());
                     if pending.is_some() {
@@ -402,11 +405,57 @@ fn allocate(
     if node.drained || !node.info.ready || seconds() - node.last_seen > 30.0 {
         return Ok(None);
     }
+    // A grant holds a slot only while its deadline is live. An un-acknowledged
+    // grant expires out of delivery (push never reached the worker, or the worker
+    // never took it), and an acknowledged grant expires once the worker stops
+    // renewing. Counting dead grants pinned capacity=1 workers forever — even
+    // across a restart with a fresh instance_id — so the slot never came back.
+    let now = seconds();
+    // Recycle dead grants first: the job goes back to Queued so it can be leased
+    // again, and the dead grant stops counting as held work.
+    let stale: Vec<(String, String)> = s
+        .assignments
+        .iter()
+        .filter(|(_, g)| {
+            !terminal(&s.jobs[&g.assignment.job_id].state)
+                && if g.acknowledged {
+                    g.lease_until
+                } else {
+                    g.assignment.expires_at
+                } <= now
+        })
+        .map(|(id, g)| (id.clone(), g.assignment.job_id.clone()))
+        .collect();
+    for (assignment_id, job_id) in stale {
+        let Some(job) = s.jobs.get_mut(&job_id) else {
+            continue;
+        };
+        if job.assignment_id.as_deref() != Some(assignment_id.as_str()) {
+            continue;
+        }
+        job.state = JobState::Queued;
+        job.assignment_id = None;
+        job.attempt_id = None;
+        job.lease_id = None;
+    }
+    let live: BTreeSet<String> = s
+        .assignments
+        .iter()
+        .filter(|(_, g)| {
+            !terminal(&s.jobs[&g.assignment.job_id].state)
+                && if g.acknowledged {
+                    g.lease_until > now
+                } else {
+                    g.assignment.expires_at > now
+                }
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
     let held = s
         .assignments
         .values()
         .filter(|g| {
-            g.assignment.worker_id == worker && !terminal(&s.jobs[&g.assignment.job_id].state)
+            g.assignment.worker_id == worker && live.contains(&g.assignment.assignment_id)
         })
         .count() as i64;
     if held + node.info.direct_active >= node.info.capacity {
@@ -417,7 +466,10 @@ fn allocate(
         .values()
         .filter(|j| {
             j.state == JobState::Queued
-                && j.assignment_id.is_none()
+                && j
+                    .assignment_id
+                    .as_ref()
+                    .is_none_or(|id| !live.contains(id))
                 && worker_supports_request(&node.info, &j.request)
         })
         .min_by_key(|j| j.submitted_at.clone())
@@ -607,8 +659,38 @@ async fn cancel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn registration(
+        worker_id: &str,
+        instance: String,
+        delivery: &str,
+        url: &str,
+    ) -> WorkerRegistration {
+        serde_json::from_value(json!({
+            "worker_id": worker_id,
+            "board_id": "board",
+            "instance_id": instance,
+            "backend": "k3",
+            "kinds": ["correctness"],
+            "delivery": delivery,
+            "url": url,
+            "capacity": 1,
+            "direct_active": 0,
+            "ready": true,
+            "environment": {"ops": ["add"], "dtypes": ["float32"]},
+            "protocol_version": "1.0.0"
+        }))
+        .unwrap()
+    }
+    fn claim_for(w: &WorkerRegistration) -> ClaimRequest {
+        ClaimRequest {
+            worker_id: w.worker_id.clone(),
+            instance_id: w.instance_id.clone(),
+            request_id: id(),
+            wait_s: 0,
+        }
+    }
     #[tokio::test]
-    async fn push_pull_race_and_expired_execution_never_allocate_twice() {
+    async fn push_worker_retries_the_same_attempt_and_never_claims() {
         let temp = tempfile::tempdir().unwrap();
         let m = Manager::open(Config {
             victoriametrics: None,
@@ -632,79 +714,76 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(axum::serve(listener, app).into_future());
-        let worker:WorkerRegistration=serde_json::from_value(json!({"worker_id":"hybrid","board_id":"board","instance_id":id(),"backend":"k3","kinds":["correctness"],"delivery":"hybrid","url":url,"capacity":1,"direct_active":0,"ready":true,"environment":{"ops":["add"],"dtypes":["float32"]},"protocol_version":"1.0.0"})).unwrap();
+        let worker = registration("push-1", id(), "push", &url);
         m.register(worker.clone()).await.unwrap();
         let request: JobRequest = serde_json::from_str(rvbench_protocol::EXAMPLE_JOB).unwrap();
-        m.submit(request.clone()).await.unwrap();
-        let claim = ClaimRequest {
-            worker_id: worker.worker_id.clone(),
-            instance_id: worker.instance_id.clone(),
-            request_id: id(),
-            wait_s: 0,
-        };
-        let (push, pull) = tokio::join!(m.push_tick(), m.claim(claim));
-        push.unwrap();
-        let pull = pull.unwrap();
-        // Hybrid may deliver the same grant over both channels before its ACK.
-        // Persistent admission deduplicates those deliveries at the worker.
-        let mut attempts: std::collections::BTreeSet<String> = delivered
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|s| s.assignment.as_ref().unwrap().attempt_id.clone())
-            .collect();
-        if let Some(a) = &pull {
-            attempts.insert(a.attempt_id.clone());
-        }
-        assert_eq!(attempts.len(), 1);
-        let assignment = m
-            .store
-            .tx(|s| {
-                assert_eq!(s.assignments.len(), 1);
-                Ok(s.assignments.values().next().unwrap().assignment.clone())
-            })
-            .await
-            .unwrap();
+        m.submit(request).await.unwrap();
         m.push_tick().await.unwrap();
+        m.push_tick().await.unwrap();
+        let seen = delivered.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2, "an un-acked grant is re-delivered every tick");
+        let first = seen[0].assignment.as_ref().unwrap().attempt_id.clone();
         assert!(
-            delivered
-                .lock()
-                .unwrap()
-                .iter()
-                .all(|s| s.assignment.as_ref().unwrap().attempt_id == assignment.attempt_id)
+            seen.iter()
+                .all(|s| s.assignment.as_ref().unwrap().attempt_id == first),
+            "a retry must reuse the attempt, not mint a new one"
         );
+        // A push-only registration has no claim channel.
+        assert!(
+            m.claim(claim_for(&worker)).await.is_err(),
+            "push-only workers are refused on the claim path"
+        );
+        server.abort();
+    }
+    #[tokio::test]
+    async fn expired_lease_frees_the_slot_and_reissues_a_new_attempt() {
+        let temp = tempfile::tempdir().unwrap();
+        let m = Manager::open(Config {
+            victoriametrics: None,
+            listen: "127.0.0.1:0".into(),
+            data_dir: temp.path().into(),
+        })
+        .await
+        .unwrap();
+        let worker = registration("pull-1", id(), "pull", "http://127.0.0.1:1");
+        m.register(worker.clone()).await.unwrap();
+        let request: JobRequest = serde_json::from_str(rvbench_protocol::EXAMPLE_JOB).unwrap();
+        m.submit(request).await.unwrap();
+        let first = m
+            .claim(claim_for(&worker))
+            .await
+            .unwrap()
+            .expect("first grant");
         let ack = Ack {
             worker_id: worker.worker_id.clone(),
             instance_id: worker.instance_id.clone(),
-            lease_id: assignment.lease_id.clone(),
-            worker_job_id: assignment.job_id.clone(),
+            lease_id: first.lease_id.clone(),
+            worker_job_id: first.job_id.clone(),
         };
-        m.acknowledge(assignment.assignment_id.clone(), ack, false)
+        m.acknowledge(first.assignment_id.clone(), ack, false)
             .await
             .unwrap();
+        assert!(
+            m.claim(claim_for(&worker)).await.unwrap().is_none(),
+            "a live lease keeps capacity=1 occupied"
+        );
+        let assignment_id = first.assignment_id.clone();
         m.store
             .tx(move |s| {
-                s.assignments
-                    .get_mut(&assignment.assignment_id)
-                    .unwrap()
-                    .lease_until = seconds() - 60.0;
+                s.assignments.get_mut(&assignment_id).unwrap().lease_until = seconds() - 60.0;
                 Ok(())
             })
             .await
             .unwrap();
-        m.submit(request).await.unwrap();
-        assert!(
-            m.claim(ClaimRequest {
-                worker_id: worker.worker_id,
-                instance_id: worker.instance_id,
-                request_id: id(),
-                wait_s: 0
-            })
+        let second = m
+            .claim(claim_for(&worker))
             .await
             .unwrap()
-            .is_none()
+            .expect("an expired lease must release the slot");
+        assert_ne!(
+            second.attempt_id, first.attempt_id,
+            "re-leasing the job is a new attempt"
         );
-        assert_eq!(m.store.tx(|s| Ok(s.assignments.len())).await.unwrap(), 1);
-        server.abort();
+        assert_eq!(second.job_id, first.job_id, "the same job is retried");
     }
 }
