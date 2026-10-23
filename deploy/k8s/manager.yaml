@@ -53,8 +53,11 @@ spec:
       terminationGracePeriodSeconds: 10
       containers:
         - name: manager
-          image: rvbench-manager:0.1.0
+          image: rvbench-manager:0.1.1
           imagePullPolicy: IfNotPresent
+          # 本镜像用 crane append 从 debian:trixie-slim 叠加层构造，没有 ENTRYPOINT，
+          # 不显式给 command 时 args 会喂给 base 的 bash 而立刻退出（CrashLoopBackOff）。
+          command: ["/usr/local/bin/rvbench-manager"]
           args: ["--config", "/etc/rvbench/config.json"]
           ports:
             - name: http
