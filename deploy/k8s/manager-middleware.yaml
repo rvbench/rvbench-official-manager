@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: root-to-ui
+  namespace: rvbench
+spec:
+  # 只改写「精确的根路径」，其他路径原样透传。
+  # 不要用 replacePath —— Ingress 的 path: / 是 Prefix 匹配，
+  # 一个 router 覆盖全部路径，replacePath 会把 /results、/healthz 也一起改写成 /ui。
+  replacePathRegex:
+    regex: ^/$
+    replacement: /ui
+# 命名注意：Traefik 给 CRD 中间件注册的内部名是 <namespace>-<metadata.name>@kubernetescrd。
+# 所以 Ingress 里引用的是 rvbench-root-to-ui@kubernetescrd，
+# 它对应的是「namespace=rvbench + name=root-to-ui」，不是 name=rvbench-root-to-ui。
+# 写错名字时 Traefik 会丢掉整个 router，整站变 404（日志：middleware ... does not exist）。

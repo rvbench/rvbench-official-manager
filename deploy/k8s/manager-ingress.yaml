@@ -37,6 +37,9 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
     traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+    # 根路径直出控制台：/ -> /ui（中间件定义见 manager-middleware.yaml）
+    # 内部名 = <namespace>-<middleware name>@kubernetescrd = rvbench-root-to-ui
+    traefik.ingress.kubernetes.io/router.middlewares: rvbench-root-to-ui@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:
