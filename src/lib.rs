@@ -1,15 +1,18 @@
 //! Durable unified submission and scheduling. Push and pull call the same transaction.
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Extension, Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use rvbench_protocol::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+pub mod auth;
 pub mod observability;
+pub mod workers;
+use auth::Principal;
 use rvbench_protocol::console::{Console, LeaseView};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -25,6 +28,10 @@ pub struct Config {
     pub data_dir: PathBuf,
     #[serde(default)]
     pub victoriametrics: Option<String>,
+    #[serde(default)]
+    pub auth: Option<auth::AuthConfig>,
+    #[serde(default)]
+    pub worker_tokens: Vec<workers::BootstrapWorkerToken>,
 }
 #[derive(Default, Serialize, Deserialize)]
 pub struct ManagerData {
@@ -36,6 +43,9 @@ pub struct ManagerData {
     #[serde(default)]
     claim_times: BTreeMap<String, f64>,
     events: BTreeMap<String, String>,
+    /// job_id -> owner sub, written in the same transaction as the job (design §2).
+    #[serde(default)]
+    owners: BTreeMap<String, String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Node {
@@ -54,6 +64,7 @@ pub struct Manager {
     pub collection: std::sync::RwLock<CollectionHealth>,
     pub query_limit: tokio::sync::Semaphore,
     pub config: Config,
+    pub auth: Arc<auth::AuthState>,
     store: Store<ManagerData>,
     client: reqwest::Client,
     _lock: std::fs::File,
@@ -83,11 +94,36 @@ impl Manager {
             })
             .await
             .map_err(|e| anyhow::anyhow!(e.1))?;
+        for t in &config.worker_tokens {
+            anyhow::ensure!(
+                t.sha256.len() == 64 && t.sha256.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase()),
+                "worker_tokens[{}].sha256 must be 64 lowercase hex chars",
+                t.id
+            );
+        }
+        let bootstrap = config
+            .worker_tokens
+            .iter()
+            .map(|t| workers::migrate::BootstrapToken {
+                id: t.id.clone(),
+                sha256: t.sha256.clone(),
+            })
+            .collect();
+        // One AuthState either way: the worker channel is independent of
+        // auth.mode (design §2), so the registry must load even when the user
+        // system is off. Default config = mode off = login endpoints disabled.
+        let auth = auth::AuthState::open(
+            config.auth.clone().unwrap_or_default(),
+            &config.data_dir,
+            bootstrap,
+        )
+        .await?;
         Ok(Arc::new(Self {
             console,
             collection: std::sync::RwLock::new(serde_json::from_value(json!({"status":"unavailable","errors":["Waiting for VictoriaMetrics health check"]})).unwrap()),
             query_limit: tokio::sync::Semaphore::new(4),
             config,
+            auth,
             store,
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(3))
@@ -101,6 +137,40 @@ impl Manager {
             loop {
                 health.update_collection().await;
                 tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        });
+        let auth = self.auth.clone();
+        tokio::spawn(async move {
+            loop {
+                auth.db.cleanup_sync(seconds());
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        });
+        // Aggregated worker heartbeats: memory on every register, disk every 10s
+        // (design §4.3), plus claim expiry/cleanup sweeps.
+        let auth = self.auth.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let dirty: Vec<_> = auth.heartbeats.lock().unwrap().clone().into_iter().collect();
+                if !dirty.is_empty() {
+                    let _ = auth
+                        .db
+                        .call(move |c| {
+                            workers::store::flush_last_seen(c, &dirty)
+                                .map_err(|e| auth::AuthError::internal(e.to_string()))
+                        })
+                        .await;
+                }
+                let now = seconds();
+                let _ = auth
+                    .db
+                    .call(move |c| {
+                        workers::store::expire_claims(c, now)
+                            .and_then(|_| workers::store::cleanup_claims(c, now))
+                            .map_err(|e| auth::AuthError::internal(e.to_string()))
+                    })
+                    .await;
             }
         });
         let manager = self.clone();
@@ -127,6 +197,7 @@ impl Manager {
         for w in workers {
             let wid = w.worker_id.clone();
             let instance = w.instance_id.clone();
+            let ownership = self.auth.workers.ownership();
             let assignment = self
                 .store
                 .tx(move |s| {
@@ -146,7 +217,7 @@ impl Manager {
                     if pending.is_some() {
                         return Ok(pending);
                     }
-                    allocate(s, &wid, &instance)
+                    allocate(s, &wid, &instance, &ownership)
                 })
                 .await?;
             if let Some(a) = assignment {
@@ -170,7 +241,11 @@ impl Manager {
         }
         Ok(())
     }
-    pub async fn submit(&self, request: JobRequest) -> Result<JobRecord, ApiError> {
+    pub async fn submit(
+        &self,
+        request: JobRequest,
+        sub: Option<String>,
+    ) -> Result<JobRecord, ApiError> {
         validate_request(&request).map_err(ApiError::bad)?;
         self.store
             .tx(move |s| {
@@ -189,12 +264,18 @@ impl Manager {
                     return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "queue full".into()));
                 }
                 let r = record(request);
+                if let Some(sub) = &sub {
+                    s.owners.insert(r.job_id.clone(), sub.clone());
+                }
                 s.jobs.insert(r.job_id.clone(), r.clone());
                 Ok(r)
             })
             .await
     }
-    pub async fn register(&self, info: WorkerRegistration) -> Result<Value, ApiError> {
+    pub async fn claim_page() -> impl IntoResponse {
+    Html(workers::CLAIM_HTML)
+}
+pub async fn register(&self, info: WorkerRegistration) -> Result<Value, ApiError> {
         validate(
             "WorkerRegistration",
             &serde_json::to_value(&info).map_err(anyhow::Error::from)?,
@@ -241,11 +322,14 @@ impl Manager {
     }
     pub async fn claim(&self, c: ClaimRequest) -> Result<Option<Assignment>, ApiError> {
         let deadline = Instant::now() + Duration::from_secs(c.wait_s as u64);
+        let ownership = self.auth.workers.ownership();
         loop {
             let request = c.clone();
             let result = self
                 .store
-                .tx(move |s| {
+                .tx({
+                    let ownership = ownership.clone();
+                    move |s| {
                     s.claims.retain(|id, (_, grant)| {
                         grant.is_some()
                             || s.claim_times.get(id).is_some_and(|t| seconds() - t < 300.0)
@@ -270,7 +354,7 @@ impl Manager {
                     if node.info.delivery == DeliveryMode::Push {
                         return Err(ApiError::conflict("worker is push-only"));
                     }
-                    let a = allocate(s, &request.worker_id, &request.instance_id)?;
+                    let a = allocate(s, &request.worker_id, &request.instance_id, &ownership)?;
                     // Empty receipts are recorded only once the long poll actually finishes.
                     if let Some(a) = &a {
                         s.claims.insert(
@@ -279,8 +363,9 @@ impl Manager {
                         );
                     }
                     Ok(a)
-                })
-                .await?;
+                        }
+                    })
+                    .await?;
             if result.is_some() {
                 return Ok(result);
             }
@@ -397,6 +482,7 @@ fn allocate(
     s: &mut ManagerData,
     worker: &str,
     instance: &str,
+    ownership: &BTreeMap<String, (String, bool)>,
 ) -> Result<Option<Assignment>, ApiError> {
     let node = s.workers.get(worker).ok_or_else(ApiError::missing)?;
     if node.info.instance_id != instance {
@@ -461,6 +547,12 @@ fn allocate(
     if held + node.info.direct_active >= node.info.capacity {
         return Ok(None);
     }
+    // Private workers only serve their owner's jobs; ownerless (pre-upgrade)
+    // jobs only go to public workers (design §2 safe default).
+    let (worker_owner, worker_public) = ownership
+        .get(worker)
+        .map(|(owner, public)| (Some(owner.clone()), *public))
+        .unwrap_or((None, true));
     let next = s
         .jobs
         .values()
@@ -471,6 +563,11 @@ fn allocate(
                     .as_ref()
                     .is_none_or(|id| !live.contains(id))
                 && worker_supports_request(&node.info, &j.request)
+                && match (worker_public, s.owners.get(&j.job_id)) {
+                    (true, _) => true,
+                    (false, Some(owner)) => Some(owner) == worker_owner.as_ref(),
+                    (false, None) => false,
+                }
         })
         .min_by_key(|j| j.submitted_at.clone())
         .map(|j| j.job_id.clone());
@@ -506,7 +603,59 @@ fn allocate(
 }
 pub fn router(manager: Arc<Manager>) -> Router {
     let metrics = manager.console.clone();
+    // Per-route permission binding (design D8): every business route carries an
+    // explicit require(); resource-level ownership is checked inside handlers.
+    macro_rules! require {
+        ($p:expr) => {{
+            let m = manager.clone();
+            axum::middleware::from_fn(move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let m = m.clone();
+                async move { auth::guard(&m, req, next, $p).await }
+            })
+        }};
+    }
+    let require_user = {
+        let m = manager.clone();
+        axum::middleware::from_fn(move |req: axum::extract::Request, next: axum::middleware::Next| {
+            let m = m.clone();
+            async move { auth::guard_user(&m, req, next).await }
+        })
+    };
+    let jobs_write = post(submit).route_layer(require!(auth::Permission::JobSubmit));
+    let jobs_read = get(list).route_layer(require!(auth::Permission::JobReadSelf));
+    let job_read = get(job).route_layer(require!(auth::Permission::JobReadSelf));
+    let job_cancel = delete(cancel).route_layer(require!(auth::Permission::JobCancelSelf));
+    let cluster_register = post(register).route_layer(require!(auth::Permission::WorkerRegister));
+    let cluster_claim = post(claim).route_layer(require!(auth::Permission::WorkerExecute));
+    let cluster_ack = post(ack).route_layer(require!(auth::Permission::WorkerExecute));
+    let cluster_events = post(events).route_layer(require!(auth::Permission::WorkerExecute));
+    let cluster_renew = post(renew).route_layer(require!(auth::Permission::WorkerExecute));
+    let workers_write = post(workers::routes::create).route_layer(require_user.clone());
+    let workers_list = get(workers::routes::list).route_layer(require_user.clone());
+    let worker_rotate = post(workers::routes::rotate).route_layer(require_user.clone());
+    let worker_delete = delete(workers::routes::delete).route_layer(require_user.clone());
+    let claims_list = get(workers::claim::list_claims).route_layer(require_user.clone());
+    let claim_approve = post(workers::claim::approve).route_layer(require_user.clone());
+    let claim_deny = post(workers::claim::deny).route_layer(require_user.clone());
     Router::new()
+        .route("/jobs", jobs_write.merge(jobs_read))
+        .route("/jobs/{id}", job_read.merge(job_cancel))
+        .merge(auth::routes::router())
+        .route("/workers", workers_write.merge(workers_list))
+        .route("/workers/{id}/tokens", worker_rotate)
+        .route(
+            "/workers/{id}",
+            get(workers::routes::get_one).delete(worker_delete),
+        )
+        .route("/cluster/workers/claim", post(workers::claim::begin))
+        .route(
+            "/cluster/workers/claim/{device_code}",
+            get(workers::claim::poll),
+        )
+        .route("/claims", claims_list)
+        .route("/claims/{code}/approve", claim_approve)
+        .route("/claims/{code}/deny", claim_deny)
+        .route("/claim", get(claim_page))
         .route("/metrics", get(observability::metrics))
         .route("/observability/summary", get(observability::summary))
         .route("/observability/targets", get(observability::targets))
@@ -519,15 +668,16 @@ pub fn router(manager: Arc<Manager>) -> Router {
                 Json(json!({"ok":true,"service":"rvbench-manager","protocol_version":"1.0.0"}))
             }),
         )
-        .route("/jobs", post(submit).get(list))
-        .route("/jobs/{id}", get(job).delete(cancel))
         .route("/cluster/workers", get(workers))
-        .route("/cluster/workers/register", post(register))
-        .route("/cluster/workers/{id}/drain", post(drain))
-        .route("/cluster/assignments/claim", post(claim))
-        .route("/cluster/assignments/{id}/ack", post(ack))
-        .route("/cluster/assignments/{id}/events", post(events))
-        .route("/cluster/leases/{id}/renew", post(renew))
+        .route("/cluster/workers/register", cluster_register)
+        .route(
+            "/cluster/workers/{id}/drain",
+            post(drain).route_layer(require_user.clone()),
+        )
+        .route("/cluster/assignments/claim", cluster_claim)
+        .route("/cluster/assignments/{id}/ack", cluster_ack)
+        .route("/cluster/assignments/{id}/events", cluster_events)
+        .route("/cluster/leases/{id}/renew", cluster_renew)
         .route(
             "/ui",
             get(|| async { Html(rvbench_protocol::CONSOLE_HTML) }),
@@ -541,18 +691,46 @@ pub fn router(manager: Arc<Manager>) -> Router {
 }
 async fn submit(
     State(m): State<Arc<Manager>>,
+    principal: Option<Extension<Principal>>,
     RawJson(v): RawJson,
 ) -> Result<impl IntoResponse, ApiError> {
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(m.submit(decode("JobRequest", v)?).await?),
-    ))
+    let principal = principal.map(|Extension(p)| p);
+    let sub = principal.as_ref().map(|p| p.sub.clone());
+    let r = m.submit(decode("JobRequest", v)?, sub).await?;
+    if let Some(p) = &principal {
+        auth::audit::record(&m.auth, Some(&p.sub), Some(&p.login), "job.submit", Some(&r.job_id), "ok", None).await;
+    }
+    Ok((StatusCode::ACCEPTED, Json(r)))
+}
+async fn claim_page() -> impl IntoResponse {
+    Html(workers::CLAIM_HTML)
 }
 async fn register(
     State(m): State<Arc<Manager>>,
+    principal: Option<Extension<Principal>>,
     RawJson(v): RawJson,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(m.register(decode("WorkerRegistration", v)?).await?))
+    let info: WorkerRegistration = decode("WorkerRegistration", v)?;
+    if let Some(Extension(p)) = &principal
+        && p.is_worker()
+        && p.sub != format!("worker:{}", info.worker_id)
+    {
+        // A worker token registers exactly its own id (design §2).
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "worker_id does not match the token".into(),
+        ));
+    }
+    if m.auth.workers.get(&info.worker_id).is_some() {
+        let now = seconds();
+        m.auth.workers.set_last_seen(&info.worker_id, now);
+        m.auth
+            .heartbeats
+            .lock()
+            .unwrap()
+            .insert(info.worker_id.clone(), now);
+    }
+    Ok(Json(m.register(info).await?))
 }
 async fn claim(State(m): State<Arc<Manager>>, RawJson(v): RawJson) -> Result<Response, ApiError> {
     match m.claim(decode("ClaimRequest", v)?).await? {
@@ -581,16 +759,55 @@ async fn events(
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(m.receive(id, decode("JobEvent", v)?).await?))
 }
-async fn workers(State(m): State<Arc<Manager>>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(m.store.tx(|s|Ok(json!(s.workers.values().map(|n| {
+async fn workers(
+    State(m): State<Arc<Manager>>,
+    principal: Option<Extension<Principal>>,
+    Query(q): Query<Full>,
+) -> Result<Json<Value>, ApiError> {
+    // Anonymous sees public runtime state; a login adds own private workers; admin
+    // can request the unredacted view (design §2).
+    let viewer = principal.map(|Extension(p)| p);
+    let is_admin = viewer.as_ref().is_some_and(|p| p.is_admin);
+    let full = is_admin && q.full.unwrap_or(false);
+    let viewer_sub = viewer.as_ref().map(|p| p.sub.clone());
+    let registry = m.auth.workers.clone();
+    Ok(Json(m.store.tx(move |s|Ok(json!(s.workers.values().filter(|n| {
+        let record = registry.get(&n.info.worker_id);
+        let public = record.as_ref().is_none_or(|r| r.is_public());
+        let owner_sub = record.as_ref().map(|r| r.owner_sub.clone());
+        public || is_admin || match (&viewer_sub, &owner_sub) {
+            (Some(v), Some(o)) => v == o,
+            (Some(v), None) => v == "org:rvbench",
+            _ => false,
+        }
+    }).map(|n| {
     let grants:Vec<_>=s.assignments.values().filter(|g|g.assignment.worker_id==n.info.worker_id&&!terminal(&s.jobs[&g.assignment.job_id].state)).map(|g|json!({"assignment":g.assignment,"acknowledged":g.acknowledged,"lease_until":g.lease_until,"uncertain":if g.acknowledged {g.lease_until<seconds()} else {g.assignment.expires_at<seconds()}})).collect();
-    json!({"worker":n.info,"last_seen":n.last_seen,"online":seconds()-n.last_seen<=30.0,"drained":n.drained,"assignments":grants})
+    let mut info=serde_json::to_value(&n.info).unwrap();
+    if !full { info["url"]=json!(""); info["observability"]=Value::Null; }
+    let owner=registry.get(&n.info.worker_id).map(|r|json!({"sub":r.owner_sub,"login":r.owner_login})).unwrap_or(json!({"sub":"org:rvbench","login":"rvbench"}));
+    json!({"worker":info,"owner":owner,"last_seen":n.last_seen,"online":seconds()-n.last_seen<=30.0,"drained":n.drained,"assignments":grants})
 }).collect::<Vec<_>>()))).await?))
 }
+#[derive(Deserialize, Default)]
+struct Full { full: Option<bool> }
 async fn drain(
     State(m): State<Arc<Manager>>,
     Path(id): Path<String>,
+    principal: Option<Extension<Principal>>,
 ) -> Result<Json<Value>, ApiError> {
+    // owner (worker:manage:self), admin (worker:manage:all), or the worker itself;
+    // a foreign private worker drains into 404 (design §2).
+    if let Some(Extension(p)) = &principal {
+        let allowed = p.is_admin
+            || p.sub == format!("worker:{id}")
+            || m.auth
+                .workers
+                .get(&id)
+                .is_none_or(|r| r.owner_sub == p.sub || r.is_public());
+        if !allowed {
+            return Err(ApiError::missing());
+        }
+    }
     Ok(Json(
         m.store
             .tx(move |s| {
@@ -601,11 +818,25 @@ async fn drain(
             .await?,
     ))
 }
-async fn list(State(m): State<Arc<Manager>>) -> Result<Json<Vec<JobRecord>>, ApiError> {
+async fn list(
+    State(m): State<Arc<Manager>>,
+    principal: Option<Extension<Principal>>,
+) -> Result<Json<Vec<JobRecord>>, ApiError> {
+    // Logged-in users see only their own jobs; admin sees everything (design §2).
+    // Anonymous (mode=off/warn) keeps the pre-auth behavior.
+    let (sub, all) = match principal {
+        Some(Extension(p)) => (Some(p.sub), p.is_admin),
+        None => (None, true),
+    };
     Ok(Json(
         m.store
-            .tx(|s| {
-                let mut records: Vec<_> = s.jobs.values().cloned().collect();
+            .tx(move |s| {
+                let mut records: Vec<_> = s
+                    .jobs
+                    .values()
+                    .filter(|j| all || s.owners.get(&j.job_id).is_some_and(|o| Some(o) == sub.as_ref()))
+                    .cloned()
+                    .collect();
                 records.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
                 records.truncate(100);
                 Ok(records)
@@ -621,7 +852,24 @@ async fn job(
     State(m): State<Arc<Manager>>,
     Path(id): Path<String>,
     Query(q): Query<Wait>,
+    principal: Option<Extension<Principal>>,
 ) -> Result<Json<JobRecord>, ApiError> {
+    // Owner or admin; anyone else gets 404 so job ids cannot be enumerated (design §2).
+    if let Some(Extension(p)) = &principal
+        && !p.is_admin
+        && m.auth.config.mode == auth::AuthMode::Enforce
+    {
+        let owner = m
+            .store
+            .tx({
+                let id = id.clone();
+                move |s| Ok(s.owners.get(&id).cloned())
+            })
+            .await?;
+        if owner.as_deref() != Some(p.sub.as_str()) {
+            return Err(ApiError::missing());
+        }
+    }
     let until = Instant::now() + Duration::from_secs(q.wait.unwrap_or(0).min(25));
     loop {
         let id = id.clone();
@@ -638,22 +886,41 @@ async fn job(
 async fn cancel(
     State(m): State<Arc<Manager>>,
     Path(id): Path<String>,
+    principal: Option<Extension<Principal>>,
 ) -> Result<Json<JobRecord>, ApiError> {
-    Ok(Json(
-        m.store
-            .tx(move |s| {
-                let r = s.jobs.get_mut(&id).ok_or_else(ApiError::missing)?;
-                if r.state != JobState::Queued || r.assignment_id.is_some() {
-                    return Err(ApiError::conflict(
-                        "only unassigned queued jobs can be canceled",
-                    ));
-                }
-                r.state = JobState::Canceled;
-                r.finished_at = Some(now());
-                Ok(r.clone())
+    if let Some(Extension(p)) = &principal
+        && !p.is_admin
+        && m.auth.config.mode == auth::AuthMode::Enforce
+    {
+        let owner = m
+            .store
+            .tx({
+                let id = id.clone();
+                move |s| Ok(s.owners.get(&id).cloned())
             })
-            .await?,
-    ))
+            .await?;
+        if owner.as_deref() != Some(p.sub.as_str()) {
+            return Err(ApiError::missing());
+        }
+    }
+    let r = m
+        .store
+        .tx(move |s| {
+            let r = s.jobs.get_mut(&id).ok_or_else(ApiError::missing)?;
+            if r.state != JobState::Queued || r.assignment_id.is_some() {
+                return Err(ApiError::conflict(
+                    "only unassigned queued jobs can be canceled",
+                ));
+            }
+            r.state = JobState::Canceled;
+            r.finished_at = Some(now());
+            Ok(r.clone())
+        })
+        .await?;
+    if let Some(Extension(p)) = &principal {
+        auth::audit::record(&m.auth, Some(&p.sub), Some(&p.login), "job.cancel", Some(&r.job_id), "ok", None).await;
+    }
+    Ok(Json(r))
 }
 
 #[cfg(test)]
@@ -694,6 +961,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let m = Manager::open(Config {
             victoriametrics: None,
+            auth: None,
+            worker_tokens: Vec::new(),
             listen: "127.0.0.1:0".into(),
             data_dir: temp.path().into(),
         })
@@ -717,7 +986,7 @@ mod tests {
         let worker = registration("push-1", id(), "push", &url);
         m.register(worker.clone()).await.unwrap();
         let request: JobRequest = serde_json::from_str(rvbench_protocol::EXAMPLE_JOB).unwrap();
-        m.submit(request).await.unwrap();
+        m.submit(request, None).await.unwrap();
         m.push_tick().await.unwrap();
         m.push_tick().await.unwrap();
         let seen = delivered.lock().unwrap().clone();
@@ -740,6 +1009,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let m = Manager::open(Config {
             victoriametrics: None,
+            auth: None,
+            worker_tokens: Vec::new(),
             listen: "127.0.0.1:0".into(),
             data_dir: temp.path().into(),
         })
@@ -748,7 +1019,7 @@ mod tests {
         let worker = registration("pull-1", id(), "pull", "http://127.0.0.1:1");
         m.register(worker.clone()).await.unwrap();
         let request: JobRequest = serde_json::from_str(rvbench_protocol::EXAMPLE_JOB).unwrap();
-        m.submit(request).await.unwrap();
+        m.submit(request, None).await.unwrap();
         let first = m
             .claim(claim_for(&worker))
             .await

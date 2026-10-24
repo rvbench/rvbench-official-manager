@@ -11,6 +11,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
     let manager = rvbench_manager::Manager::open(config).await?;
     manager.start();
-    axum::serve(listener, rvbench_manager::router(manager)).await?;
+    // ConnectInfo powers auth rate limiting and audit IP columns.
+    axum::serve(
+        listener,
+        rvbench_manager::router(manager)
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

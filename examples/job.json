@@ -1,0 +1,14 @@
+{
+  "backend": "k3",
+  "kind": "correctness",
+  "op": "add",
+  "shape": [
+    64,
+    64
+  ],
+  "dtype": "float32",
+  "seed": 20261017,
+  "warmup": 2,
+  "repetitions": 5,
+  "timeout_secs": 180
+}

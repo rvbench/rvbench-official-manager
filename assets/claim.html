@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>rvbench · 认领 worker</title>
+<style>
+/* 复制自 console.html 的同一套变量（改色板时两处一起改，计划风险 #5）。 */
+:root{--bg:#f4f6fa;--panel:#fff;--ink:#18243c;--muted:#6d778a;--line:#e4e8f0;--accent:#5d52db;--accent-soft:#eeecff;--green:#087f68;--green-soft:#e7f5ef;--red:#c33e4a;--red-soft:#fff0f1;--amber:#a5660f;--amber-soft:#fff6e6;--shadow:0 5px 22px #1b2a4810;--code:#f3f5f9;font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:var(--ink);background:var(--bg);font-synthesis:none}
+[data-theme=dark]{--bg:#10141e;--panel:#191f2c;--ink:#e6eaf3;--muted:#9aa6bc;--line:#2a3346;--accent:#aaa0ff;--accent-soft:#30294f;--green:#71d9b6;--green-soft:#163a34;--red:#ff98a3;--red-soft:#432631;--amber:#f4c177;--amber-soft:#3e3324;--shadow:0 5px 22px #0002;--code:#111823}
+*{box-sizing:border-box}body{margin:0;font-size:14px;line-height:1.6}button,input{font:inherit}button{cursor:pointer;border:1px solid var(--line);border-radius:9px;padding:9px 15px;background:var(--panel);color:var(--ink);font-weight:600}button:hover{background:var(--accent-soft)}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.danger{color:var(--red);background:transparent;border-color:transparent}.danger:hover{background:var(--red-soft)}input{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--ink);min-height:40px;letter-spacing:2px;text-transform:uppercase}
+.top{background:var(--panel);border-bottom:1px solid var(--line)}.topinner{max-width:680px;margin:auto;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.brand{font-weight:800;display:flex;align-items:center;gap:9px}.brandmark{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--accent);color:#fff;font-size:14px}
+.shell{max-width:680px;margin:0 auto;padding:26px 20px 60px}h1{font-size:22px;margin:0 0 4px}h2{font-size:15px;margin:26px 0 10px}.sub{color:var(--muted);font-size:13px;margin:0 0 18px}
+.banner{background:var(--amber-soft);color:var(--amber);border-radius:9px;padding:11px 14px;font-size:13px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:18px}.kv{display:grid;grid-template-columns:110px 1fr;gap:7px 12px;font-size:13px}.kv dt{color:var(--muted)}.kv dd{margin:0;overflow-wrap:anywhere}.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12px}
+.err{color:var(--red);font-size:12px;min-height:18px;margin:8px 0}
+.row{display:flex;gap:10px;align-items:center}.row input{flex:1}.actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
+label.radio{display:flex;gap:8px;align-items:center;font-size:13px;margin:10px 0;cursor:pointer}.hint{color:var(--muted);font-size:12px}
+.pending{list-style:none;padding:0;margin:0}.pending li{display:flex;justify-content:space-between;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted);flex-wrap:wrap;align-items:center}.pending li:last-child{border:0}
+.empty{color:var(--muted);font-size:12px;padding:8px 0}
+.ok{background:var(--green-soft);color:var(--green);border-radius:9px;padding:14px;font-size:13px}
+.gate{opacity:.45;pointer-events:none}
+[hidden]{display:none!important}
+</style></head><body>
+<header class="top"><div class="topinner"><span class="brand"><span class="brandmark">rv</span>rvbench</span><span id="who" class="mono" style="font-size:12px;color:var(--muted)"></span></div></header>
+<main class="shell">
+  <div id="gate">
+  <h1>认领 worker</h1>
+  <p class="sub">输入板子日志里的 8 位短码，确认后它会绑定到你的名下。</p>
+  <div class="banner" id="loginBanner" hidden><span>登录后才能确认认领。</span><button class="primary" id="loginBtn">登录</button></div>
+  <div class="row"><input id="code" placeholder="XXXX-XXXX" maxlength="9" autocomplete="off" aria-label="认领短码"><button class="primary" id="findBtn">查找</button></div>
+  <p class="err" id="codeErr" role="status"></p>
+  <section id="claimCard" class="card" hidden>
+    <dl class="kv" id="claimKv"></dl>
+    <div style="margin-top:12px">
+      <label class="radio"><input type="radio" name="vis" value="private" checked> 私有（只服务你自己的任务）</label>
+      <label class="radio" id="publicOpt" hidden><input type="radio" name="vis" value="public"> 公开（服务所有任务）</label>
+    </div>
+    <p class="hint">只在你亲自上架这块板子时确认。来源 IP 可与板子所在网络核对。</p>
+    <div class="actions"><button class="danger" id="denyBtn">拒绝</button><button class="primary" id="approveBtn">确认认领</button></div>
+  </section>
+  <div class="ok" id="doneBox" hidden></div>
+  <h2>待确认（<span id="pendingCount">0</span>）</h2>
+  <ul class="pending" id="pendingList"></ul>
+  </div>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let me=null,claims=[],current=null;
+const q=new URLSearchParams(location.search),initial=(q.get('code')||'').toUpperCase();
+function theme(){let p;try{p=localStorage.getItem('rvbench-theme')}catch{}document.documentElement.dataset.theme=p||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')};theme();
+async function api(p,o={}){const r=await fetch(p,{cache:'no-store',credentials:'same-origin',...o});let v;try{v=await r.json()}catch{throw Error('HTTP '+r.status)}if(!r.ok){const e=Error(v&&v.error&&v.error.message||v&&v.error||('HTTP '+r.status));e.status=r.status;throw e}return v}
+function rel(s){const d=new Date(s);return Number.isNaN(+d)?'—':Math.max(0,Math.round((Date.now()-d)/60000))+' 分钟前'}
+$('loginBtn').onclick=()=>location.href='/auth/login?redirect='+encodeURIComponent(location.pathname+location.search);
+$('code').oninput=e=>{let v=e.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9-]/g,'');if(v.length>4&&!v.includes('-'))v=v.slice(0,4)+'-'+v.slice(4);e.target.value=v.slice(0,9)};
+$('code').onkeydown=e=>{if(e.key==='Enter')find()};
+async function refreshMe(){try{me=await api('/auth/me')}catch{me=null}
+  if(me){$('who').textContent=me.principal.login;$('loginBanner').hidden=true;$('gate').classList.remove('gate');const admin=me.principal.roles.includes('admin');$('publicOpt').hidden=!admin;}
+  else{$('who').textContent='未登录';$('loginBanner').hidden=false;$('gate').classList.add('gate')}}
+async function refreshClaims(){try{const v=await api('/claims');claims=v.items||[];$('pendingCount').textContent=claims.length;
+  $('pendingList').innerHTML=claims.length?claims.map(c=>`<li><span class="mono">${esc(c.code)}</span><span>${esc(c.worker_id)} / ${esc(c.board_id)} / <span class="mono">${esc(c.source_ip||'—')}</span> / ${rel(c.requested_at)}</span><button data-code="${esc(c.code)}">查看</button></li>`).join(''):'<li class="empty">暂无待确认的认领。</li>';
+  $('pendingList').querySelectorAll('[data-code]').forEach(b=>b.onclick=()=>{$('code').value=b.dataset.code;find()});
+}catch(e){$('pendingList').innerHTML='<li class="empty">'+esc(e.message)+'</li>'}}
+async function find(){const code=$('code').value.trim();$('codeErr').textContent='';$('claimCard').hidden=true;$('doneBox').hidden=true;current=null;
+  if(!/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code)){$('codeErr').textContent='短码格式应为 XXXX-XXXX（不含 0/O/1/I）。';return}
+  const hit=claims.find(c=>c.code===code);
+  if(!hit){$('codeErr').textContent='没有找到该短码：可能已过期、被处理，或板子尚未发起认领。';refreshClaims();return}
+  current=hit;
+  const mins=Math.max(0,Math.round((new Date(hit.expires_at)-Date.now())/60000));
+  $('claimKv').innerHTML=[['worker_id',hit.worker_id],['board',hit.board_id],['backend',hit.backend],['kinds',(hit.kinds||[]).join(', ')],['来源 IP',hit.source_ip||'—'],['请求时间',rel(hit.requested_at)+'（'+mins+' 分钟后过期）']].map(([k,v])=>`<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join('');
+  document.querySelector('input[name=vis][value=private]').checked=true;
+  $('claimCard').hidden=false}
+$('findBtn').onclick=find;
+$('approveBtn').onclick=async()=>{if(!current)return;const vis=document.querySelector('input[name=vis]:checked').value;
+  try{const r=await api('/claims/'+current.code+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visibility:vis})});
+    $('claimCard').hidden=true;$('doneBox').hidden=false;
+    $('doneBox').textContent='已把 '+r.worker_id+' 绑定到 '+(r.owner&&r.owner.login||'你')+'（'+r.visibility+'）。worker 将在几秒内拿到 token。';
+    current=null;$('code').value='';refreshClaims();
+  }catch(e){$('codeErr').textContent=e.status===409?'这条认领已被处理。':e.message;refreshClaims()}};
+$('denyBtn').onclick=async()=>{if(!current)return;
+  try{await api('/claims/'+current.code+'/deny',{method:'POST'});$('claimCard').hidden=true;$('codeErr').textContent='已拒绝。';current=null;refreshClaims()}
+  catch(e){$('codeErr').textContent=e.message}};
+let timer=null;
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearInterval(timer);timer=null}else{refreshClaims();timer=setInterval(refreshClaims,10000)}});
+(async()=>{await refreshMe();await refreshClaims();if(initial){$('code').value=initial;find()}timer=setInterval(refreshClaims,10000)})();
+</script></body></html>

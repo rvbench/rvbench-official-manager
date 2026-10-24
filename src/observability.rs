@@ -8,14 +8,26 @@ pub async fn metrics(State(m): State<Arc<Manager>>) -> impl IntoResponse {
             header::CONTENT_TYPE,
             "text/plain; version=0.0.4; charset=utf-8",
         )],
-        m.console.metrics(),
+        format!("{}{}", m.console.metrics(), m.auth.metrics.render()),
     )
 }
 pub async fn results(
     State(m): State<Arc<Manager>>,
     Query(q): Query<ResultQuery>,
 ) -> Result<Json<ResultsPage>, ApiError> {
-    Ok(Json(m.console.results(q)?))
+    let mut page = m.console.results(q)?;
+    // /results stays a public aggregate, but private worker ids are masked so the
+    // public listing never reveals someone else's fleet topology (plan W3).
+    let registry = m.auth.workers.clone();
+    for item in &mut page.items {
+        if registry
+            .get(&item.worker_id)
+            .is_some_and(|r| !r.is_public())
+        {
+            item.worker_id.clear();
+        }
+    }
+    Ok(Json(page))
 }
 pub async fn leaderboard(
     State(m): State<Arc<Manager>>,

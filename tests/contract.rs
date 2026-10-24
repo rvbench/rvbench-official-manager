@@ -13,6 +13,8 @@ async fn claims_match_implementation_capabilities_on_either_hardware() {
         let temp = tempfile::tempdir().unwrap();
         let m = Manager::open(Config {
             victoriametrics: None,
+            auth: None,
+            worker_tokens: Vec::new(),
             listen: "127.0.0.1:0".into(),
             data_dir: temp.path().into(),
         })
@@ -38,11 +40,11 @@ async fn claims_match_implementation_capabilities_on_either_hardware() {
         r.backend = hardware;
         r.implementation = Some(KernelImplementation::Triton);
         r.dtype = JobRequestDtype::Float16;
-        let triton_job = m.submit(r.clone()).await.unwrap();
+        let triton_job = m.submit(r.clone(), None).await.unwrap();
         r.implementation = Some(KernelImplementation::NativeC);
-        let unsupported_dtype = m.submit(r.clone()).await.unwrap();
+        let unsupported_dtype = m.submit(r.clone(), None).await.unwrap();
         r.dtype = JobRequestDtype::Float32;
-        let c_job = m.submit(r).await.unwrap();
+        let c_job = m.submit(r, None).await.unwrap();
         let claim = |w: &WorkerRegistration| ClaimRequest {
             worker_id: w.worker_id.clone(),
             instance_id: w.instance_id.clone(),
@@ -61,6 +63,8 @@ async fn atomic_claims_fencing_replays_and_durable_results() {
     let temp = tempfile::tempdir().unwrap();
     let config = Config {
         victoriametrics: None,
+            auth: None,
+            worker_tokens: Vec::new(),
         listen: "127.0.0.1:0".into(),
         data_dir: temp.path().into(),
     };
@@ -71,13 +75,13 @@ async fn atomic_claims_fencing_replays_and_durable_results() {
     req.op = "add".into();
     req.kind = JobKind::Correctness;
     req.client_request_id = Some("same".into());
-    let j = m.submit(req.clone()).await.unwrap();
+    let j = m.submit(req.clone(), None).await.unwrap();
     let counters_before = m.console.snapshot().metrics.clone();
-    assert_eq!(m.submit(req.clone()).await.unwrap().job_id, j.job_id);
+    assert_eq!(m.submit(req.clone(), None).await.unwrap().job_id, j.job_id);
     assert_eq!(counters_before, m.console.snapshot().metrics);
     let mut changed = req.clone();
     changed.seed += 1;
-    assert_eq!(m.submit(changed).await.unwrap_err().0, 409);
+    assert_eq!(m.submit(changed, None).await.unwrap_err().0, 409);
     let c = ClaimRequest {
         worker_id: w.worker_id.clone(),
         instance_id: w.instance_id.clone(),
@@ -172,6 +176,8 @@ async fn unauthenticated_http_validates_contract_and_role_matching() {
     let temp = tempfile::tempdir().unwrap();
     let m = Manager::open(Config {
         victoriametrics: None,
+            auth: None,
+            worker_tokens: Vec::new(),
         listen: "127.0.0.1:0".into(),
         data_dir: temp.path().into(),
     })

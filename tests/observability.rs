@@ -8,6 +8,8 @@ async fn metric_outage_does_not_block_jobs_and_invalid_queries_are_rejected() {
         listen: "127.0.0.1:0".into(),
         data_dir: t.path().into(),
         victoriametrics: None,
+            auth: None,
+            worker_tokens: Vec::new(),
     })
     .await
     .unwrap();
@@ -17,7 +19,7 @@ async fn metric_outage_does_not_block_jobs_and_invalid_queries_are_rejected() {
     let app = tokio::spawn(axum::serve(listener, rvbench_manager::router(m.clone())).into_future());
     let c = reqwest::Client::new();
     let request: JobRequest = serde_json::from_str(rvbench_protocol::EXAMPLE_JOB).unwrap();
-    let j = m.submit(request).await.unwrap();
+    let j = m.submit(request, None).await.unwrap();
     let response = c
         .get(format!("{base}/observability/summary"))
         .send()
@@ -90,6 +92,8 @@ async fn metric_outage_does_not_block_jobs_and_invalid_queries_are_rejected() {
         listen: "127.0.0.1:0".into(),
         data_dir: t.path().into(),
         victoriametrics: None,
+            auth: None,
+            worker_tokens: Vec::new(),
     })
     .await
     .unwrap();
