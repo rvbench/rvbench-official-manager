@@ -6,12 +6,18 @@ use rvbench_protocol::*;
 use serde_json::{Value, json};
 use std::time::Duration;
 
-fn static_user(login: &str, id: u64, team: Option<&str>) -> rvbench_manager::auth::config::StaticUser {
+fn static_user(
+    login: &str,
+    id: u64,
+    team: Option<&str>,
+) -> rvbench_manager::auth::config::StaticUser {
     rvbench_manager::auth::config::StaticUser {
         login: login.into(),
         id,
         name: None,
         team: team.map(str::to_string),
+        email: None,
+        avatar_url: None,
     }
 }
 fn config(mode: AuthMode) -> Config {
@@ -37,9 +43,12 @@ fn config(mode: AuthMode) -> Config {
 }
 async fn start(mode: AuthMode) -> (tempfile::TempDir, String) {
     let temp = tempfile::tempdir().unwrap();
-    let m = Manager::open(Config { data_dir: temp.path().into(), ..config(mode) })
-        .await
-        .unwrap();
+    let m = Manager::open(Config {
+        data_dir: temp.path().into(),
+        ..config(mode)
+    })
+    .await
+    .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(axum::serve(listener, rvbench_manager::router(m)).into_future());
@@ -92,7 +101,11 @@ async fn w1_worker_records_tokens_and_channel_switch() {
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 200, "no tokens yet → machine channel stays open");
+    assert_eq!(
+        r.status(),
+        200,
+        "no tokens yet → machine channel stays open"
+    );
 
     // Create private (owner = caller) — the token appears exactly once.
     let created: Value = c
@@ -149,7 +162,11 @@ async fn w1_worker_records_tokens_and_channel_switch() {
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 401, "records exist → machine credentials required");
+    assert_eq!(
+        r.status(),
+        401,
+        "records exist → machine credentials required"
+    );
     let r = c
         .post(format!("{base}/cluster/workers/register"))
         .header(reqwest::header::AUTHORIZATION, bearer(&token))
@@ -232,20 +249,32 @@ async fn w1_worker_records_tokens_and_channel_switch() {
     assert_eq!(r.status(), 200);
 
     // /cluster/workers keeps anonymous access but redacts urls and hides private rows.
-    let cluster: Value = c.get(format!("{base}/cluster/workers")).send().await.unwrap().json().await.unwrap();
+    let cluster: Value = c
+        .get(format!("{base}/cluster/workers"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     let ids: Vec<&str> = cluster
         .as_array()
         .unwrap()
         .iter()
         .map(|n| n["worker"]["worker_id"].as_str().unwrap())
         .collect();
-    assert!(ids.contains(&"k3-pub") && !ids.contains(&"k3-4"), "anonymous sees public only: {ids:?}");
-    assert!(cluster
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|n| n["worker"]["url"].as_str().unwrap_or("").is_empty()),
-        "url is redacted for non-admin");
+    assert!(
+        ids.contains(&"k3-pub") && !ids.contains(&"k3-4"),
+        "anonymous sees public only: {ids:?}"
+    );
+    assert!(
+        cluster
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|n| n["worker"]["url"].as_str().unwrap_or("").is_empty()),
+        "url is redacted for non-admin"
+    );
 }
 
 #[tokio::test]
@@ -267,10 +296,16 @@ async fn w2_claim_flow_delivers_the_token_exactly_once() {
     let code = begin["code"].as_str().unwrap().to_string();
     let device = begin["device_code"].as_str().unwrap().to_string();
     assert_eq!(code.len(), 9, "XXXX-XXXX");
-    assert!(code
-        .chars()
-        .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '-'));
-    assert!(begin["verification_url"].as_str().unwrap().ends_with("/claim"));
+    assert!(
+        code.chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '-')
+    );
+    assert!(
+        begin["verification_url"]
+            .as_str()
+            .unwrap()
+            .ends_with("/claim")
+    );
 
     // pending → 202; approve binds the approver as owner; poll returns the token once.
     let r = c
@@ -412,7 +447,7 @@ async fn w3_private_workers_serve_only_their_owner() {
             .unwrap();
         assert_eq!(r.status(), 200);
     }
-    let mut pub_reg = registration("org-k3");
+    let pub_reg = registration("org-k3");
     let r = c
         .post(format!("{base}/cluster/workers/register"))
         .header(reqwest::header::AUTHORIZATION, bearer(&pub_token))
@@ -437,7 +472,8 @@ async fn w3_private_workers_serve_only_their_owner() {
         .json()
         .await
         .unwrap();
-    let claim = json!({"worker_id":"alice-k3","instance_id":priv_instance,"request_id":id(),"wait_s":0});
+    let claim =
+        json!({"worker_id":"alice-k3","instance_id":priv_instance,"request_id":id(),"wait_s":0});
     let r = c
         .post(format!("{base}/cluster/assignments/claim"))
         .header(reqwest::header::AUTHORIZATION, bearer(&priv_token))
@@ -466,11 +502,17 @@ async fn w3_private_workers_serve_only_their_owner() {
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 204, "a private worker never takes a foreign job");
+    assert_eq!(
+        r.status(),
+        204,
+        "a private worker never takes a foreign job"
+    );
     let r = c
         .post(format!("{base}/cluster/assignments/claim"))
         .header(reqwest::header::AUTHORIZATION, bearer(&pub_token))
-        .json(&json!({"worker_id":"org-k3","instance_id":pub_instance,"request_id":id(),"wait_s":0}))
+        .json(
+            &json!({"worker_id":"org-k3","instance_id":pub_instance,"request_id":id(),"wait_s":0}),
+        )
         .send()
         .await
         .unwrap();
@@ -551,7 +593,14 @@ async fn worker_tokens_config_bootstraps_the_channel() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
-    let cluster: Value = c.get(format!("{base}/cluster/workers")).send().await.unwrap().json().await.unwrap();
+    let cluster: Value = c
+        .get(format!("{base}/cluster/workers"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     let row = cluster
         .as_array()
         .unwrap()

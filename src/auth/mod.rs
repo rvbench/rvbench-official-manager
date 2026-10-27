@@ -16,7 +16,11 @@ pub mod static_provider;
 pub mod store;
 
 use axum::http::{HeaderMap, header};
-use axum::{extract::Request, middleware::Next, response::{IntoResponse, Response}};
+use axum::{
+    extract::Request,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 pub use config::{AuthConfig, ProviderConfig};
 pub use error::AuthError;
 use metrics::AuthMetrics;
@@ -41,6 +45,10 @@ pub enum Role {
     User,
     EarlyAccess,
     Admin,
+    /// Read-only role (console upgrade plan C1). Never produced by config or
+    /// the team probe — it only ever comes from a DB grant, because granting
+    /// viewer means *restricting* that person.
+    Viewer,
     /// Machine principal resolved from an rvbw_ token; mutually exclusive with
     /// the human roles (design §2).
     Worker,
@@ -51,7 +59,20 @@ impl Role {
             Role::User => "user",
             Role::EarlyAccess => "early_access",
             Role::Admin => "admin",
+            Role::Viewer => "viewer",
             Role::Worker => "worker",
+        }
+    }
+    /// Maps a role_grants row value to a Role: the console-grantable set only.
+    /// "user" is implicit and "worker" is machine-only, so neither is grantable
+    /// and both fall to None — unknown strings are ignored, never an error
+    /// (plan C1: viewer arrives here as a plain string).
+    pub fn from_grant(s: &str) -> Option<Role> {
+        match s {
+            "admin" => Some(Role::Admin),
+            "early_access" => Some(Role::EarlyAccess),
+            "viewer" => Some(Role::Viewer),
+            _ => None,
         }
     }
 }
@@ -122,9 +143,30 @@ impl Permission {
         matches!(self, Permission::WorkerRegister | Permission::WorkerExecute)
     }
 }
+/// Write permissions stripped whenever a viewer grant is present (plan §7
+/// viewer/early_access coexistence rule): the final set is the union of the
+/// held roles' permissions minus this write set, so a viewer keeps read bits
+/// (metrics:read, suite:read:*, job:read:*, session:revoke, public:read) but
+/// can never mutate anything.
+const VIEWER_STRIPPED_WRITES: &[Permission] = &[
+    Permission::JobSubmit,
+    Permission::JobCancelSelf,
+    Permission::SuitePublish,
+    Permission::SuiteRun,
+    Permission::WorkerCreateSelf,
+    Permission::WorkerCreatePublic,
+    Permission::WorkerManageSelf,
+    Permission::WorkerManageAll,
+];
+
 /// Role -> permission set (design §2 matrix). Admin accumulates every human
 /// permission but never the machine ones (a person must not claim jobs as a
-/// worker); the worker role gets exactly the machine channel plus self-manage.
+/// worker); the worker role gets exactly the machine channel plus self-manage
+/// and wins outright when present (viewer needs no special casing — a machine
+/// token is never a person). Viewer (plan C1) is a restriction overlay: with
+/// admin it keeps admin's read bits but loses every write; without admin it
+/// replaces the operator base with the read-only floor {public:read,
+/// job:read:self}, plus the read slice of any other human role.
 pub fn permissions_for(roles: &[Role]) -> Vec<Permission> {
     if roles.contains(&Role::Worker) {
         return vec![
@@ -135,11 +177,27 @@ pub fn permissions_for(roles: &[Role]) -> Vec<Permission> {
         ];
     }
     if roles.contains(&Role::Admin) {
-        return Permission::ALL
+        let mut p: Vec<Permission> = Permission::ALL
             .iter()
             .copied()
             .filter(|p| !p.is_worker_channel())
             .collect();
+        if roles.contains(&Role::Viewer) {
+            p.retain(|x| !VIEWER_STRIPPED_WRITES.contains(x));
+        }
+        return p;
+    }
+    if roles.contains(&Role::Viewer) {
+        let mut p = vec![Permission::PublicRead, Permission::JobReadSelf];
+        if roles.contains(&Role::EarlyAccess) {
+            p.extend([
+                Permission::SuitePublish,
+                Permission::SuiteRun,
+                Permission::SuiteReadSelf,
+            ]);
+        }
+        p.retain(|x| !VIEWER_STRIPPED_WRITES.contains(x));
+        return p;
     }
     let mut p = vec![
         Permission::PublicRead,
@@ -165,6 +223,7 @@ pub struct Principal {
     pub sub: String,
     pub login: String,
     pub name: Option<String>,
+    pub email: Option<String>,
     pub avatar_url: Option<String>,
     pub provider: String,
     pub roles: Vec<Role>,
@@ -174,6 +233,8 @@ pub struct Principal {
     pub session_kind: String,
     pub session_expires_at: f64,
     pub session_sha256: String,
+    pub first_seen: f64,
+    pub last_seen: f64,
 }
 impl Principal {
     pub fn has(&self, p: Permission) -> bool {
@@ -239,20 +300,29 @@ impl AuthState {
                 org,
                 team_slug,
             } => {
-                let secret = std::env::var(client_secret_env).map_err(|_| {
-                    anyhow::anyhow!("auth provider needs env {client_secret_env}")
-                })?;
-                anyhow::ensure!(!secret.trim().is_empty(), "env {client_secret_env} is empty");
-                Arc::new(github::Github::new(client_id, secret, org.clone(), team_slug.clone()))
+                let secret = std::env::var(client_secret_env)
+                    .map_err(|_| anyhow::anyhow!("auth provider needs env {client_secret_env}"))?;
+                anyhow::ensure!(
+                    !secret.trim().is_empty(),
+                    "env {client_secret_env} is empty"
+                );
+                Arc::new(github::Github::new(
+                    client_id,
+                    secret,
+                    org.clone(),
+                    team_slug.clone(),
+                ))
             }
             ProviderConfig::Static { users } => {
                 Arc::new(static_provider::Static::new(users.clone()))
             }
         };
         let db = AuthDb::open(&data_dir.join("auth.sqlite"))?;
-        db.call(|c| crate::workers::store::init_tables(c).map_err(|e| AuthError::internal(e.to_string())))
-            .await
-            .map_err(|e: AuthError| anyhow::anyhow!(e.message))?;
+        db.call(|c| {
+            crate::workers::store::init_tables(c).map_err(|e| AuthError::internal(e.to_string()))
+        })
+        .await
+        .map_err(|e: AuthError| anyhow::anyhow!(e.message))?;
         let workers = crate::workers::WorkerRegistry::load(&db, bootstrap).await?;
         Ok(Arc::new(Self {
             db,
@@ -296,6 +366,7 @@ impl AuthState {
                 sub: format!("worker:{}", record.worker_id),
                 login: record.worker_id.clone(),
                 name: None,
+                email: None,
                 avatar_url: None,
                 provider: "worker".into(),
                 roles,
@@ -303,6 +374,8 @@ impl AuthState {
                 session_kind: "worker".into(),
                 session_expires_at: 0.0,
                 session_sha256: String::new(),
+                first_seen: 0.0,
+                last_seen: 0.0,
             });
         }
         if self.config.mode == AuthMode::Off {
@@ -346,6 +419,7 @@ impl AuthState {
             sub: principal_row.sub,
             login: principal_row.login,
             name: principal_row.name,
+            email: principal_row.email,
             avatar_url: principal_row.avatar_url,
             provider: principal_row.provider,
             roles,
@@ -353,6 +427,8 @@ impl AuthState {
             session_kind: session_row.kind,
             session_expires_at: session_row.expires_at,
             session_sha256: session_row.token_sha256,
+            first_seen: principal_row.first_seen,
+            last_seen: principal_row.last_seen,
         })
     }
     /// Three-mode gate for business routes (design D7): off passes, warn passes and
@@ -423,7 +499,12 @@ pub async fn guard_user(manager: &crate::Manager, mut req: Request, next: Next) 
 }
 
 /// Route-level guard used via `axum::middleware::from_fn` in `router()`.
-pub async fn guard(manager: &crate::Manager, mut req: Request, next: Next, permission: Permission) -> Response {
+pub async fn guard(
+    manager: &crate::Manager,
+    mut req: Request,
+    next: Next,
+    permission: Permission,
+) -> Response {
     match manager.auth.check(req.headers(), permission).await {
         Ok(principal) => {
             if let Some(p) = principal {
@@ -473,9 +554,7 @@ pub fn iso(secs: f64) -> String {
 pub fn safe_redirect(r: Option<&str>) -> Result<String, AuthError> {
     match r {
         None => Ok("/ui".into()),
-        Some(p)
-            if p.len() <= 512 && p.starts_with('/') && !p[1..].starts_with('/') =>
-        {
+        Some(p) if p.len() <= 512 && p.starts_with('/') && !p[1..].starts_with('/') => {
             Ok(p.to_string())
         }
         _ => Err(AuthError::redirect_not_allowed()),
@@ -496,15 +575,81 @@ mod tests {
         let admin = permissions_for(&[Role::User, Role::Admin]);
         assert_eq!(
             admin,
-            Permission::ALL.iter().copied().filter(|p| !p.is_worker_channel()).collect::<Vec<_>>(),
+            Permission::ALL
+                .iter()
+                .copied()
+                .filter(|p| !p.is_worker_channel())
+                .collect::<Vec<_>>(),
             "admin never carries the machine channel"
         );
         assert!(admin.contains(&Permission::WorkerCreatePublic));
         assert!(admin.contains(&Permission::WorkerManageAll));
         let machine = permissions_for(&[Role::Worker]);
-        assert!(machine.contains(&Permission::WorkerRegister) && machine.contains(&Permission::WorkerExecute));
+        assert!(
+            machine.contains(&Permission::WorkerRegister)
+                && machine.contains(&Permission::WorkerExecute)
+        );
         assert!(!machine.contains(&Permission::JobSubmit));
         assert!(!machine.contains(&Permission::MetricsRead));
+    }
+
+    #[test]
+    fn viewer_is_exactly_the_read_only_floor() {
+        let only = permissions_for(&[Role::User, Role::Viewer]);
+        let mut got: Vec<&str> = only.iter().map(|p| p.as_str()).collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            vec!["job:read:self", "public:read"],
+            "viewer alone is exactly public:read + job:read:self"
+        );
+    }
+
+    #[test]
+    fn viewer_plus_early_access_keeps_reads_loses_writes() {
+        let ead = permissions_for(&[Role::User, Role::EarlyAccess, Role::Viewer]);
+        for w in VIEWER_STRIPPED_WRITES {
+            assert!(!ead.contains(w), "write bit {w:?} must be stripped");
+        }
+        assert!(ead.contains(&Permission::PublicRead));
+        assert!(ead.contains(&Permission::JobReadSelf));
+        assert!(
+            ead.contains(&Permission::SuiteReadSelf),
+            "the early_access read slice survives the strip"
+        );
+        assert!(!ead.contains(&Permission::MetricsRead));
+    }
+
+    #[test]
+    fn viewer_plus_admin_keeps_admin_reads_loses_writes() {
+        let admin = permissions_for(&[Role::User, Role::Admin, Role::Viewer]);
+        for w in VIEWER_STRIPPED_WRITES {
+            assert!(!admin.contains(w), "write bit {w:?} must be stripped");
+        }
+        for read in [
+            Permission::PublicRead,
+            Permission::MetricsRead,
+            Permission::JobReadSelf,
+            Permission::JobReadAll,
+            Permission::SuiteReadSelf,
+            Permission::SuiteReadAll,
+            Permission::SessionRevoke,
+        ] {
+            assert!(admin.contains(&read), "admin read bit {read:?} survives");
+        }
+        // The machine channel stays human-unreachable, viewer or not.
+        assert!(!admin.contains(&Permission::WorkerRegister));
+        assert!(!admin.contains(&Permission::WorkerExecute));
+    }
+
+    #[test]
+    fn viewer_never_crosses_into_the_machine_channel() {
+        // The worker branch returns first: a machine token keeps exactly the
+        // machine permissions even if a viewer row somehow coexists.
+        let machine = permissions_for(&[Role::Worker, Role::Viewer]);
+        assert!(machine.contains(&Permission::WorkerExecute));
+        assert!(!machine.contains(&Permission::JobSubmit));
+        assert!(!machine.contains(&Permission::JobReadSelf));
     }
 
     #[test]
@@ -519,7 +664,10 @@ mod tests {
     #[test]
     fn cookie_parsing_and_building() {
         let mut h = HeaderMap::new();
-        h.insert(header::COOKIE, "a=1; rvb_session=rvb_abc; c=2".parse().unwrap());
+        h.insert(
+            header::COOKIE,
+            "a=1; rvb_session=rvb_abc; c=2".parse().unwrap(),
+        );
         assert_eq!(cookie_value(&h, "rvb_session").as_deref(), Some("rvb_abc"));
         assert_eq!(
             build_cookie("rvb_session", "v", Some(600), false),

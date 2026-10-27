@@ -1,7 +1,7 @@
 //! Provider abstraction shaped like OIDC; GitHub is the first adapter (design D2).
 //! Boxed futures keep the trait object-safe without async-trait.
-use base64::Engine;
 use super::{config::StaticUser, error::AuthError};
+use base64::Engine;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::{future::Future, pin::Pin, sync::Arc};
@@ -44,11 +44,20 @@ pub trait IdentityProvider: Send + Sync {
     fn kind(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
     fn authorize_url(&self, state: &str, pkce: &Pkce, redirect_uri: &str) -> String;
-    fn exchange_code(&self, code: String, pkce: Pkce, redirect_uri: String) -> BoxFut<Result<String, AuthError>>;
+    fn exchange_code(
+        &self,
+        code: String,
+        pkce: Pkce,
+        redirect_uri: String,
+    ) -> BoxFut<Result<String, AuthError>>;
     fn userinfo(&self, token: String) -> BoxFut<Result<ProviderUser, AuthError>>;
     /// GitHub answers team membership only for the token owner; `token` is the
     /// provider access token and `login` is only used by config-backed providers.
-    fn team_membership(&self, token: Option<String>, login: String) -> BoxFut<Result<Membership, AuthError>>;
+    fn team_membership(
+        &self,
+        token: Option<String>,
+        login: String,
+    ) -> BoxFut<Result<Membership, AuthError>>;
 }
 
 /// Test-only provider that always fails; used to exercise role degradation (D3).
@@ -69,7 +78,11 @@ impl IdentityProvider for FailingProvider {
     fn userinfo(&self, _: String) -> BoxFut<Result<ProviderUser, AuthError>> {
         Box::pin(async { Err(AuthError::provider_unavailable("failing provider")) })
     }
-    fn team_membership(&self, _: Option<String>, _: String) -> BoxFut<Result<Membership, AuthError>> {
+    fn team_membership(
+        &self,
+        _: Option<String>,
+        _: String,
+    ) -> BoxFut<Result<Membership, AuthError>> {
         Box::pin(async { Err(AuthError::provider_unavailable("failing provider")) })
     }
 }
@@ -80,6 +93,8 @@ pub fn static_user(login: &str, id: u64, team: Option<&str>) -> StaticUser {
         id,
         name: None,
         team: team.map(str::to_string),
+        email: None,
+        avatar_url: None,
     }
 }
 pub fn provider_arc(p: impl IdentityProvider + 'static) -> Arc<dyn IdentityProvider> {

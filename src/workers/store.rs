@@ -18,14 +18,43 @@ pub struct WorkerRecord {
     pub last_seen: Option<f64>,
     pub revoked_at: Option<f64>,
 }
+/// Live owner display fields resolved from the auth principals table (plan
+/// N9): `deleted` mirrors principals.deleted_at, `display` is the deleted
+/// marker or the current name/login. The wire `owner.login` stays the
+/// registration-time snapshot for the compatibility window (plan §5 dual
+/// write), so it never rewrites history on account deletion.
+#[derive(Clone, Debug)]
+pub struct OwnerView {
+    pub display: String,
+    pub deleted: bool,
+}
 impl WorkerRecord {
     pub fn is_public(&self) -> bool {
         self.visibility == "public"
     }
     pub fn to_json(&self) -> Value {
+        self.to_json_with_owner_block(json!({"sub": self.owner_sub, "login": self.owner_login}))
+    }
+    /// /workers view with the N9 owner shape `{sub, login, display, deleted}`.
+    /// `owner: None` (no principal row — the shared `org:rvbench`, config
+    /// bootstrap owners — or a lookup failure) degrades to the snapshot login
+    /// and not-deleted, matching the pre-N9 wire shape.
+    pub fn to_json_with_owner(&self, owner: Option<&OwnerView>) -> Value {
+        let (display, deleted) = match owner {
+            Some(o) => (o.display.clone(), o.deleted),
+            None => (self.owner_login.clone(), false),
+        };
+        self.to_json_with_owner_block(json!({
+            "sub": self.owner_sub,
+            "login": self.owner_login,
+            "display": display,
+            "deleted": deleted,
+        }))
+    }
+    fn to_json_with_owner_block(&self, owner: Value) -> Value {
         json!({
             "worker_id": self.worker_id,
-            "owner": {"sub": self.owner_sub, "login": self.owner_login},
+            "owner": owner,
             "visibility": self.visibility,
             "status": self.status,
             "token_prefix": self.token_prefix,
@@ -151,18 +180,25 @@ pub fn insert_claim(c: &Connection, k: &ClaimRow) -> rusqlite::Result<()> {
         "INSERT INTO worker_claims(code,device_code,worker_id,board_id,backend,kinds_json,environment_json,source_ip,created_at,expires_at,status)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'pending')",
         params![k.code, k.device_code, k.worker_id, k.board_id, k.backend,
-                serde_json::to_string(&k.kinds).unwrap(), 
+                serde_json::to_string(&k.kinds).unwrap(),
                 k.environment.as_ref().map(|v| serde_json::to_string(v).unwrap()),
                 k.source_ip, k.created_at, k.expires_at],
     )?;
     Ok(())
 }
 pub fn get_claim_by_code(c: &Connection, code: &str) -> rusqlite::Result<Option<ClaimRow>> {
-    c.query_row("SELECT * FROM worker_claims WHERE code=?1", params![code], claim_row)
-        .map(Some)
-        .or_else(no_rows)
+    c.query_row(
+        "SELECT * FROM worker_claims WHERE code=?1",
+        params![code],
+        claim_row,
+    )
+    .map(Some)
+    .or_else(no_rows)
 }
-pub fn get_claim_by_device(c: &Connection, device_code: &str) -> rusqlite::Result<Option<ClaimRow>> {
+pub fn get_claim_by_device(
+    c: &Connection,
+    device_code: &str,
+) -> rusqlite::Result<Option<ClaimRow>> {
     c.query_row(
         "SELECT * FROM worker_claims WHERE device_code=?1",
         params![device_code],
@@ -174,7 +210,9 @@ pub fn get_claim_by_device(c: &Connection, device_code: &str) -> rusqlite::Resul
 pub fn list_pending_claims(c: &Connection, now: f64) -> rusqlite::Result<Vec<ClaimRow>> {
     let mut stmt =
         c.prepare("SELECT * FROM worker_claims WHERE status='pending' AND expires_at > ?1 ORDER BY created_at")?;
-    let rows = stmt.query_map(params![now], claim_row)?.collect::<Result<Vec<_>, _>>()?;
+    let rows = stmt
+        .query_map(params![now], claim_row)?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 /// One-shot transition guarded by status; 0 affected rows means someone else won.

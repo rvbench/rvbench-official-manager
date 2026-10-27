@@ -10,6 +10,11 @@ use rvbench_protocol::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub mod auth;
+// Declared as console_api (file src/console.rs): a plain `pub mod console;`
+// would shadow the glob-imported rvbench_protocol::console module that lib.rs
+// and observability.rs reference as `console::…`.
+#[path = "console.rs"]
+pub mod console_api;
 pub mod observability;
 pub mod workers;
 use auth::Principal;
@@ -61,6 +66,7 @@ struct Grant {
 }
 pub struct Manager {
     pub console: Arc<Console>,
+    pub console_cache: console_api::GlobalCache,
     pub collection: std::sync::RwLock<CollectionHealth>,
     pub query_limit: tokio::sync::Semaphore,
     pub config: Config,
@@ -96,7 +102,10 @@ impl Manager {
             .map_err(|e| anyhow::anyhow!(e.1))?;
         for t in &config.worker_tokens {
             anyhow::ensure!(
-                t.sha256.len() == 64 && t.sha256.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase()),
+                t.sha256.len() == 64
+                    && t.sha256
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase()),
                 "worker_tokens[{}].sha256 must be 64 lowercase hex chars",
                 t.id
             );
@@ -120,6 +129,7 @@ impl Manager {
         .await?;
         Ok(Arc::new(Self {
             console,
+            console_cache: console_api::GlobalCache::default(),
             collection: std::sync::RwLock::new(serde_json::from_value(json!({"status":"unavailable","errors":["Waiting for VictoriaMetrics health check"]})).unwrap()),
             query_limit: tokio::sync::Semaphore::new(4),
             config,
@@ -152,7 +162,13 @@ impl Manager {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                let dirty: Vec<_> = auth.heartbeats.lock().unwrap().clone().into_iter().collect();
+                let dirty: Vec<_> = auth
+                    .heartbeats
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .into_iter()
+                    .collect();
                 if !dirty.is_empty() {
                     let _ = auth
                         .db
@@ -273,9 +289,9 @@ impl Manager {
             .await
     }
     pub async fn claim_page() -> impl IntoResponse {
-    Html(workers::CLAIM_HTML)
-}
-pub async fn register(&self, info: WorkerRegistration) -> Result<Value, ApiError> {
+        Html(workers::CLAIM_HTML)
+    }
+    pub async fn register(&self, info: WorkerRegistration) -> Result<Value, ApiError> {
         validate(
             "WorkerRegistration",
             &serde_json::to_value(&info).map_err(anyhow::Error::from)?,
@@ -330,42 +346,42 @@ pub async fn register(&self, info: WorkerRegistration) -> Result<Value, ApiError
                 .tx({
                     let ownership = ownership.clone();
                     move |s| {
-                    s.claims.retain(|id, (_, grant)| {
-                        grant.is_some()
-                            || s.claim_times.get(id).is_some_and(|t| seconds() - t < 300.0)
-                    });
-                    s.claim_times.retain(|id, _| s.claims.contains_key(id));
-                    let fingerprint = digest(&request);
-                    if let Some((hash, grant)) = s.claims.get(&request.request_id) {
-                        if *hash != fingerprint {
-                            return Err(ApiError::conflict("claim request_id digest mismatch"));
+                        s.claims.retain(|id, (_, grant)| {
+                            grant.is_some()
+                                || s.claim_times.get(id).is_some_and(|t| seconds() - t < 300.0)
+                        });
+                        s.claim_times.retain(|id, _| s.claims.contains_key(id));
+                        let fingerprint = digest(&request);
+                        if let Some((hash, grant)) = s.claims.get(&request.request_id) {
+                            if *hash != fingerprint {
+                                return Err(ApiError::conflict("claim request_id digest mismatch"));
+                            }
+                            return Ok(grant
+                                .as_ref()
+                                .map(|id| s.assignments[id].assignment.clone()));
                         }
-                        return Ok(grant
-                            .as_ref()
-                            .map(|id| s.assignments[id].assignment.clone()));
-                    }
-                    let node = s
-                        .workers
-                        .get(&request.worker_id)
-                        .ok_or_else(ApiError::missing)?;
-                    if node.info.instance_id != request.instance_id {
-                        return Err(ApiError::conflict("claim instance mismatch"));
-                    }
-                    if node.info.delivery == DeliveryMode::Push {
-                        return Err(ApiError::conflict("worker is push-only"));
-                    }
-                    let a = allocate(s, &request.worker_id, &request.instance_id, &ownership)?;
-                    // Empty receipts are recorded only once the long poll actually finishes.
-                    if let Some(a) = &a {
-                        s.claims.insert(
-                            request.request_id,
-                            (fingerprint, Some(a.assignment_id.clone())),
-                        );
-                    }
-                    Ok(a)
+                        let node = s
+                            .workers
+                            .get(&request.worker_id)
+                            .ok_or_else(ApiError::missing)?;
+                        if node.info.instance_id != request.instance_id {
+                            return Err(ApiError::conflict("claim instance mismatch"));
                         }
-                    })
-                    .await?;
+                        if node.info.delivery == DeliveryMode::Push {
+                            return Err(ApiError::conflict("worker is push-only"));
+                        }
+                        let a = allocate(s, &request.worker_id, &request.instance_id, &ownership)?;
+                        // Empty receipts are recorded only once the long poll actually finishes.
+                        if let Some(a) = &a {
+                            s.claims.insert(
+                                request.request_id,
+                                (fingerprint, Some(a.assignment_id.clone())),
+                            );
+                        }
+                        Ok(a)
+                    }
+                })
+                .await?;
             if result.is_some() {
                 return Ok(result);
             }
@@ -540,9 +556,7 @@ fn allocate(
     let held = s
         .assignments
         .values()
-        .filter(|g| {
-            g.assignment.worker_id == worker && live.contains(&g.assignment.assignment_id)
-        })
+        .filter(|g| g.assignment.worker_id == worker && live.contains(&g.assignment.assignment_id))
         .count() as i64;
     if held + node.info.direct_active >= node.info.capacity {
         return Ok(None);
@@ -558,10 +572,7 @@ fn allocate(
         .values()
         .filter(|j| {
             j.state == JobState::Queued
-                && j
-                    .assignment_id
-                    .as_ref()
-                    .is_none_or(|id| !live.contains(id))
+                && j.assignment_id.as_ref().is_none_or(|id| !live.contains(id))
                 && worker_supports_request(&node.info, &j.request)
                 && match (worker_public, s.owners.get(&j.job_id)) {
                     (true, _) => true,
@@ -608,18 +619,22 @@ pub fn router(manager: Arc<Manager>) -> Router {
     macro_rules! require {
         ($p:expr) => {{
             let m = manager.clone();
-            axum::middleware::from_fn(move |req: axum::extract::Request, next: axum::middleware::Next| {
-                let m = m.clone();
-                async move { auth::guard(&m, req, next, $p).await }
-            })
+            axum::middleware::from_fn(
+                move |req: axum::extract::Request, next: axum::middleware::Next| {
+                    let m = m.clone();
+                    async move { auth::guard(&m, req, next, $p).await }
+                },
+            )
         }};
     }
     let require_user = {
         let m = manager.clone();
-        axum::middleware::from_fn(move |req: axum::extract::Request, next: axum::middleware::Next| {
-            let m = m.clone();
-            async move { auth::guard_user(&m, req, next).await }
-        })
+        axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let m = m.clone();
+                async move { auth::guard_user(&m, req, next).await }
+            },
+        )
     };
     let jobs_write = post(submit).route_layer(require!(auth::Permission::JobSubmit));
     let jobs_read = get(list).route_layer(require!(auth::Permission::JobReadSelf));
@@ -662,6 +677,11 @@ pub fn router(manager: Arc<Manager>) -> Router {
         .route("/observability/range", get(observability::range))
         .route("/results", get(observability::results))
         .route("/leaderboard", get(observability::leaderboard))
+        .route("/console/bootstrap", get(console_api::bootstrap))
+        .route("/console/facilities", get(console_api::facilities))
+        .route("/console/capabilities", get(console_api::capabilities))
+        .route("/console/features", get(console_api::features))
+        .route("/console/instance", get(console_api::instance))
         .route(
             "/healthz",
             get(|| async {
@@ -698,7 +718,16 @@ async fn submit(
     let sub = principal.as_ref().map(|p| p.sub.clone());
     let r = m.submit(decode("JobRequest", v)?, sub).await?;
     if let Some(p) = &principal {
-        auth::audit::record(&m.auth, Some(&p.sub), Some(&p.login), "job.submit", Some(&r.job_id), "ok", None).await;
+        auth::audit::record(
+            &m.auth,
+            Some(&p.sub),
+            Some(&p.login),
+            "job.submit",
+            Some(&r.job_id),
+            "ok",
+            None,
+        )
+        .await;
     }
     Ok((StatusCode::ACCEPTED, Json(r)))
 }
@@ -789,7 +818,9 @@ async fn workers(
 }).collect::<Vec<_>>()))).await?))
 }
 #[derive(Deserialize, Default)]
-struct Full { full: Option<bool> }
+struct Full {
+    full: Option<bool>,
+}
 async fn drain(
     State(m): State<Arc<Manager>>,
     Path(id): Path<String>,
@@ -834,7 +865,12 @@ async fn list(
                 let mut records: Vec<_> = s
                     .jobs
                     .values()
-                    .filter(|j| all || s.owners.get(&j.job_id).is_some_and(|o| Some(o) == sub.as_ref()))
+                    .filter(|j| {
+                        all || s
+                            .owners
+                            .get(&j.job_id)
+                            .is_some_and(|o| Some(o) == sub.as_ref())
+                    })
                     .cloned()
                     .collect();
                 records.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
@@ -918,7 +954,16 @@ async fn cancel(
         })
         .await?;
     if let Some(Extension(p)) = &principal {
-        auth::audit::record(&m.auth, Some(&p.sub), Some(&p.login), "job.cancel", Some(&r.job_id), "ok", None).await;
+        auth::audit::record(
+            &m.auth,
+            Some(&p.sub),
+            Some(&p.login),
+            "job.cancel",
+            Some(&r.job_id),
+            "ok",
+            None,
+        )
+        .await;
     }
     Ok(Json(r))
 }
@@ -990,7 +1035,11 @@ mod tests {
         m.push_tick().await.unwrap();
         m.push_tick().await.unwrap();
         let seen = delivered.lock().unwrap().clone();
-        assert_eq!(seen.len(), 2, "an un-acked grant is re-delivered every tick");
+        assert_eq!(
+            seen.len(),
+            2,
+            "an un-acked grant is re-delivered every tick"
+        );
         let first = seen[0].assignment.as_ref().unwrap().attempt_id.clone();
         assert!(
             seen.iter()

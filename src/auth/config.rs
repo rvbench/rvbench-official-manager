@@ -40,6 +40,8 @@ pub struct StaticUser {
     pub id: u64,
     pub name: Option<String>,
     pub team: Option<String>,
+    pub email: Option<String>,
+    pub avatar_url: Option<String>,
 }
 impl AuthConfig {
     pub fn session_ttl(&self) -> f64 {
@@ -67,8 +69,10 @@ impl AuthConfig {
             anyhow::bail!("auth.mode != off requires public_base_url");
         };
         let url = reqwest::Url::parse(base)?;
-        let loopback =
-            matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]" | "::1"));
+        let loopback = matches!(
+            url.host_str(),
+            Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+        );
         match (url.scheme(), loopback, self.allow_insecure_cookie) {
             ("https", _, _) => {}
             ("http", true, _) => {}

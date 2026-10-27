@@ -1,26 +1,77 @@
 //! /workers management endpoints (plan W1). Guards: route-level "any logged-in
 //! user" plus resource-level owner-or-admin checks; visibility=public creation
-//! requires worker:create:public (admin only).
-use super::store::{self, WorkerRecord};
+//! requires worker:create:public (admin only). Owner blocks carry the N9 shape
+//! `{sub, login, display, deleted}` — login stays the registration snapshot
+//! while display/deleted are resolved live from the principals table.
+use super::store::{self, OwnerView, WorkerRecord};
 use super::token as worker_token;
-use crate::auth::{AuthError, Principal};
 use crate::Manager;
+use crate::auth::{AuthError, Principal};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<Manager>> {
     Router::new()
-        .route(
-            "/workers",
-            post(create).get(crate::workers::routes::list),
-        )
+        .route("/workers", post(create).get(crate::workers::routes::list))
         .route("/workers/{id}", get(get_one).delete(delete))
         .route("/workers/{id}/tokens", post(rotate))
+}
+
+/// Resolves the live `(display, deleted)` pair for every distinct owner sub in
+/// one connection visit (plan N9): point lookups on the principals primary
+/// key — worker counts are small, so no IN-list SQL is warranted. Subs without
+/// a principal row (the shared `org:rvbench`, config bootstrap owners) and
+/// read failures simply stay absent, letting serialization fall back to the
+/// registration snapshot so the listing itself never fails on account state.
+async fn resolve_owners(m: &Manager, subs: BTreeSet<String>) -> HashMap<String, OwnerView> {
+    let mut views = HashMap::new();
+    if subs.is_empty() {
+        return views;
+    }
+    let Ok(rows) = m
+        .auth
+        .db
+        .call(move |c| {
+            let mut rows = Vec::with_capacity(subs.len());
+            for sub in &subs {
+                if let Some(p) = crate::auth::store::get_principal(c, sub)? {
+                    rows.push((sub.clone(), p));
+                }
+            }
+            Ok(rows)
+        })
+        .await
+    else {
+        return views;
+    };
+    for (sub, p) in rows {
+        let deleted = p.deleted_at.is_some();
+        let display = if deleted {
+            "已注销用户".to_string()
+        } else {
+            p.name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&p.login)
+                .to_string()
+        };
+        views.insert(sub, OwnerView { display, deleted });
+    }
+    views
+}
+
+/// Single-record convenience over [`resolve_owners`].
+async fn owner_of(m: &Manager, record: &WorkerRecord) -> Option<OwnerView> {
+    let mut subs = BTreeSet::new();
+    subs.insert(record.owner_sub.clone());
+    resolve_owners(m, subs).await.remove(&record.owner_sub)
 }
 
 pub(crate) async fn create(
@@ -84,26 +135,36 @@ pub(crate) async fn create(
         })
         .await?;
     if !inserted {
-        return Err(AuthError::new(StatusCode::CONFLICT, "conflict", "worker_id already in use"));
+        return Err(AuthError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "worker_id already in use",
+        ));
     }
     m.auth.workers.upsert(record.clone());
     Ok(Json(json!({
-        "worker": record.to_json(),
+        "worker": record.to_json_with_owner(owner_of(&m, &record).await.as_ref()),
         "token": {"token": plain, "token_prefix": record.token_prefix, "created_at": crate::auth::iso(now)},
     })))
 }
 
-pub(crate) async fn list(State(m): State<Arc<Manager>>, principal: axum::Extension<Principal>) -> Json<Value> {
+pub(crate) async fn list(
+    State(m): State<Arc<Manager>>,
+    principal: axum::Extension<Principal>,
+) -> Json<Value> {
     let visible: Vec<_> = m
         .auth
         .workers
         .all()
         .into_iter()
-        .filter(|r| {
-            principal.is_admin || r.is_public() || r.owner_sub == principal.sub
-        })
+        .filter(|r| principal.is_admin || r.is_public() || r.owner_sub == principal.sub)
         .collect();
-    Json(json!({"items": visible.iter().map(|r| r.to_json()).collect::<Vec<_>>()}))
+    // One batched lookup for every distinct owner on the page (plan N9).
+    let subs: BTreeSet<String> = visible.iter().map(|r| r.owner_sub.clone()).collect();
+    let owners = resolve_owners(&m, subs).await;
+    Json(
+        json!({"items": visible.iter().map(|r| r.to_json_with_owner(owners.get(&r.owner_sub))).collect::<Vec<_>>()}),
+    )
 }
 
 pub(crate) async fn get_one(
@@ -125,7 +186,9 @@ pub(crate) async fn get_one(
         // Foreign private workers are indistinguishable from missing ones.
         return Err(AuthError::missing());
     }
-    Ok(Json(record.to_json()))
+    Ok(Json(
+        record.to_json_with_owner(owner_of(&m, &record).await.as_ref()),
+    ))
 }
 
 /// Owner or admin; revoking a worker with live assignments returns 409 (drain first).
@@ -164,9 +227,7 @@ pub(crate) async fn delete(
     let wid_revoke = id.clone();
     m.auth
         .db
-        .call(move |c| {
-            store::revoke_worker(c, &wid_revoke, now).map_err(AuthError::internal)
-        })
+        .call(move |c| store::revoke_worker(c, &wid_revoke, now).map_err(AuthError::internal))
         .await?;
     if let Some(r) = m.auth.workers.get(&id) {
         let mut revoked = r.clone();
@@ -224,10 +285,14 @@ pub(crate) async fn rotate(
     updated.token_sha256 = sha;
     updated.token_prefix = prefix.clone();
     updated.created_at = now;
-    updated.status = if updated.last_seen.is_some() { "active".into() } else { "pending".into() };
+    updated.status = if updated.last_seen.is_some() {
+        "active".into()
+    } else {
+        "pending".into()
+    };
     m.auth.workers.upsert(updated.clone());
     Ok(Json(json!({
-        "worker": updated.to_json(),
+        "worker": updated.to_json_with_owner(owner_of(&m, &updated).await.as_ref()),
         "token": {"token": plain, "token_prefix": prefix, "created_at": crate::auth::iso(now)},
     })))
 }
